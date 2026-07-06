@@ -4,6 +4,7 @@ import json
 import logging
 import time
 from collections.abc import Mapping
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -107,12 +108,12 @@ class HaloCollarConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 data = await self._async_validate(user_input)
             except HaloAuthError as err:
                 await self.hass.async_add_executor_job(
-                    _write_auth_debug, self.hass, error_type="invalid_auth", error=err
+                    partial(_write_auth_debug, self.hass, error_type="invalid_auth", error=err)
                 )
                 errors["base"] = "invalid_auth"
             except HaloApiError as err:
                 await self.hass.async_add_executor_job(
-                    _write_auth_debug, self.hass, error_type="cannot_connect", error=err
+                    partial(_write_auth_debug, self.hass, error_type="cannot_connect", error=err)
                 )
                 errors["base"] = "cannot_connect"
             else:
@@ -152,12 +153,12 @@ class HaloCollarConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 data = await self._async_validate(merged)
             except HaloAuthError as err:
                 await self.hass.async_add_executor_job(
-                    _write_auth_debug, self.hass, error_type="invalid_auth", error=err
+                    partial(_write_auth_debug, self.hass, error_type="invalid_auth", error=err)
                 )
                 errors["base"] = "invalid_auth"
             except HaloApiError as err:
                 await self.hass.async_add_executor_job(
-                    _write_auth_debug, self.hass, error_type="cannot_connect", error=err
+                    partial(_write_auth_debug, self.hass, error_type="cannot_connect", error=err)
                 )
                 errors["base"] = "cannot_connect"
             else:
