@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -16,6 +17,8 @@ REQUEST_TIMEOUT_SECONDS = 30
 RETRYABLE_STATUS = (429, 500, 502, 503, 504)
 # Delays between attempts; total attempts = len(RETRY_BACKOFF_SECONDS) + 1.
 RETRY_BACKOFF_SECONDS = (1.0, 3.0)
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class HaloApiError(Exception):
@@ -151,16 +154,22 @@ class HaloApiClient:
                 response = await self._session.post(
                     f"{self._auth_base}/connect/token",
                     data=data,
-                    headers={"Accept": "application/json"},
+                    headers=self._token_headers(),
                 )
         except (TimeoutError, aiohttp.ClientError) as err:
             raise HaloApiError(f"Token request failed: {err!r}") from err
+        text = await response.text()
         if response.status >= 500:
             # Identity-server outage, not bad credentials; must not trigger reauth.
-            text = await response.text()
             raise HaloApiError(f"Token endpoint error: HTTP {response.status}: {text[:200]}")
         payload = await response.json(content_type=None)
         if response.status >= 400:
+            _LOGGER.warning(
+                "Halo token request rejected: HTTP %s, oauth_error=%s, description=%s",
+                response.status,
+                payload.get("error") if isinstance(payload, dict) else None,
+                payload.get("error_description") if isinstance(payload, dict) else text[:200],
+            )
             raise HaloAuthError(f"Token request failed: HTTP {response.status}: {payload}")
         if not isinstance(payload, dict) or "access_token" not in payload:
             raise HaloAuthError(f"Token request returned no access_token: {payload}")
@@ -174,6 +183,17 @@ class HaloApiClient:
         return {
             "Accept": "application/json",
             "Authorization": f"Bearer {self._access_token}",
+            **self._client_headers(),
+        }
+
+    def _token_headers(self) -> dict[str, str]:
+        return {
+            "Accept": "application/json",
+            **self._client_headers(),
+        }
+
+    def _client_headers(self) -> dict[str, str]:
+        return {
             "Halo-Client": (
                 f"clientId={self._client_id}&version=2.11.0"
                 "&appInstanceId=00000000-0000-0000-0000-000000000000"

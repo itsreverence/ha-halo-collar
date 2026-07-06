@@ -96,11 +96,13 @@ async def test_login_exchanges_credentials_for_tokens():
 
     await client.async_login("user@example.com", "hunter2", scope="openid offline_access")
 
-    url, data, _ = session.posts[0]
+    url, data, headers = session.posts[0]
     assert url.endswith("/connect/token")
     assert data["grant_type"] == "password"
     assert data["username"] == "user@example.com"
     assert data["password"] == "hunter2"
+    assert headers["Accept"] == "application/json"
+    assert "clientId=halo.app.android" in headers["Halo-Client"]
     assert client.token_snapshot["access_token"] == "new-access"
     assert client.token_snapshot["refresh_token"] == "new-refresh"
 

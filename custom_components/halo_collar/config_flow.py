@@ -72,7 +72,6 @@ class HaloCollarConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         snapshot = client.token_snapshot
         return {
             CONF_EMAIL: user_input[CONF_EMAIL],
-            CONF_PASSWORD: user_input[CONF_PASSWORD],
             CONF_ACCESS_TOKEN: snapshot["access_token"],
             CONF_REFRESH_TOKEN: snapshot["refresh_token"],
             CONF_EXPIRES_AT: snapshot["expires_at"],
