@@ -49,23 +49,26 @@
     "sensor": {
       "battery": {"name": "Battery"},
       "battery_status": {"name": "Battery status"},
-      "remaining_battery_lifetime": {"name": "Remaining battery lifetime"},
-      "current_adapter": {"name": "Current adapter"},
+      "remaining_battery_lifetime": {"name": "Battery runtime"},
+      "current_adapter": {"name": "Connection type"},
       "wifi_status": {"name": "Wi-Fi status"},
       "wifi_signal": {"name": "Wi-Fi signal"},
       "cellular_status": {"name": "Cellular status"},
       "cellular_signal": {"name": "Cellular signal"},
       "gps_accuracy": {"name": "GPS accuracy"},
-      "gps_accuracy_status": {"name": "GPS accuracy status"},
+      "location_status": {"name": "Location status"},
       "safety_status": {"name": "Safety status"},
       "firmware": {"name": "Firmware"},
       "last_telemetry": {"name": "Last telemetry"}
     },
     "binary_sensor": {
-      "online": {"name": "Online"},
+      "online": {"name": "Connectivity"},
       "fence_breach": {"name": "Fence breach"},
       "gps_calibration_required": {"name": "GPS calibration required"},
       "compass_calibration_required": {"name": "Compass calibration required"}
+    },
+    "device_tracker": {
+      "pet_tracker": {"name": "Location"}
     },
     "event": {
       "fence_breach": {"name": "Fence breach event"}
