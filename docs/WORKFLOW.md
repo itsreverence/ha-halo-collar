@@ -46,8 +46,8 @@ Before cutting a public release / GitHub tag:
 ## HACS default submission
 
 1. Ensure the repository is public with a description and topics.
-2. Add the `halo_collar` domain to
-   [`home-assistant/brands`](https://github.com/home-assistant/brands) (icon +
-   logo). See `docs/BRANDS.md`.
+2. Add brand images (icon/logo) inside the integration at
+   `custom_components/halo_collar/brand/`. The `home-assistant/brands` repo no
+   longer accepts custom-integration submissions. See `docs/BRANDS.md`.
 3. Open a PR against [`hacs/default`](https://github.com/hacs/default) adding
    `itsreverence/ha-halo-collar` to the `integration` list.

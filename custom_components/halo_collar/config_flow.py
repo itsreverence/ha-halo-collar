@@ -6,6 +6,7 @@ from typing import Any
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.const import CONF_NAME
+from homeassistant.core import callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import HaloApiClient, HaloApiError, HaloAuthError
@@ -17,12 +18,16 @@ from .const import (
     CONF_EXPIRES_AT,
     CONF_PASSWORD,
     CONF_REFRESH_TOKEN,
+    CONF_SCAN_INTERVAL,
     DEFAULT_API_BASE,
     DEFAULT_AUTH_BASE,
     DEFAULT_CLIENT_ID,
     DEFAULT_CLIENT_SECRET,
+    DEFAULT_SCAN_INTERVAL_SECONDS,
     DEFAULT_TOKEN_SCOPE,
     DOMAIN,
+    MAX_SCAN_INTERVAL_SECONDS,
+    MIN_SCAN_INTERVAL_SECONDS,
 )
 
 
@@ -44,6 +49,13 @@ class HaloCollarConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     def __init__(self) -> None:
         self._reauth_entry: config_entries.ConfigEntry | None = None
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(
+        config_entry: config_entries.ConfigEntry,
+    ) -> HaloCollarOptionsFlow:
+        return HaloCollarOptionsFlow()
 
     async def _async_validate(self, user_input: dict[str, Any]) -> dict[str, Any]:
         """Sign in with the given credentials and return a token/data payload."""
@@ -133,4 +145,23 @@ class HaloCollarConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 }
             ),
             errors=errors,
+        )
+
+
+class HaloCollarOptionsFlow(config_entries.OptionsFlow):
+    async def async_step_init(self, user_input: dict[str, Any] | None = None):
+        if user_input is not None:
+            return self.async_create_entry(title="", data=user_input)
+
+        current = self.config_entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL_SECONDS)
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_SCAN_INTERVAL, default=current): vol.All(
+                        vol.Coerce(int),
+                        vol.Range(min=MIN_SCAN_INTERVAL_SECONDS, max=MAX_SCAN_INTERVAL_SECONDS),
+                    ),
+                }
+            ),
         )

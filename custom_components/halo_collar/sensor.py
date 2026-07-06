@@ -9,6 +9,7 @@ from homeassistant.const import PERCENTAGE, UnitOfTime
 
 from .const import DOMAIN
 from .entity import HaloEntity
+from .helpers import last_telemetry as _last_telemetry
 from .helpers import nested as _nested
 from .helpers import pretty_status as _pretty_status
 from .helpers import seconds_to_hours as _seconds_to_hours
@@ -90,6 +91,12 @@ SENSORS = (
         key="firmware",
         translation_key="firmware",
         value_fn=lambda c: _nested(c, "firmware", "formattedVersion"),
+    ),
+    HaloSensorDescription(
+        key="last_telemetry",
+        translation_key="last_telemetry",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        value_fn=_last_telemetry,
     ),
 )
 

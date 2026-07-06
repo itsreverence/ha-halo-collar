@@ -30,6 +30,19 @@
       "reauth_successful": "Re-authentication was successful."
     }
   },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Halo Collar options",
+        "data": {
+          "scan_interval": "Update interval (seconds)"
+        },
+        "data_description": {
+          "scan_interval": "How often to poll the Halo cloud for new telemetry. Between 60 and 3600 seconds; the collar itself typically reports every few minutes."
+        }
+      }
+    }
+  },
   "entity": {
     "sensor": {
       "battery": {"name": "Battery"},
@@ -43,7 +56,8 @@
       "gps_accuracy": {"name": "GPS accuracy"},
       "gps_accuracy_status": {"name": "GPS accuracy status"},
       "safety_status": {"name": "Safety status"},
-      "firmware": {"name": "Firmware"}
+      "firmware": {"name": "Firmware"},
+      "last_telemetry": {"name": "Last telemetry"}
     },
     "binary_sensor": {
       "online": {"name": "Online"},

@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from homeassistant.components.device_tracker.config_entry import TrackerEntity
 from homeassistant.components.device_tracker.const import SourceType
+from homeassistant.const import STATE_HOME
 
 from .const import DOMAIN
 from .entity import HaloEntity
+from .helpers import indoors_on_wifi
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
@@ -42,3 +44,15 @@ class HaloPetTracker(HaloEntity, TrackerEntity):
         return ((self.collar or {}).get("petInfo", {}).get("telemetry", {}) or {}).get(
             "gpsAccuracyInMeters"
         )
+
+    @property
+    def location_name(self) -> str | None:
+        """Pin the pet to Home while it is indoors on its configured Wi-Fi.
+
+        Indoors the GPS fix is missing or jittery, which would otherwise show the
+        pet as away (or nowhere) while it naps on the couch.
+        """
+        collar = self.collar
+        if collar is not None and indoors_on_wifi(collar):
+            return STATE_HOME
+        return None

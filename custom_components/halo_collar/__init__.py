@@ -9,6 +9,7 @@ from .const import (
     CONF_CLIENT_SECRET,
     CONF_EXPIRES_AT,
     CONF_REFRESH_TOKEN,
+    CONF_SCAN_INTERVAL,
     DEFAULT_API_BASE,
     DEFAULT_AUTH_BASE,
     DEFAULT_CLIENT_ID,
@@ -18,6 +19,11 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _scan_interval(entry) -> timedelta:
+    seconds = entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL_SECONDS)
+    return timedelta(seconds=int(seconds))
 
 
 async def async_setup_entry(hass, entry) -> bool:
@@ -56,18 +62,31 @@ async def async_setup_entry(hass, entry) -> bool:
         logger=_LOGGER,
         name=DOMAIN,
         update_method=_async_update,
-        update_interval=timedelta(seconds=DEFAULT_SCAN_INTERVAL_SECONDS),
+        update_interval=_scan_interval(entry),
     )
     await coordinator.async_config_entry_first_refresh()
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
         "client": client,
         "coordinator": coordinator,
     }
+    # Applied in place rather than via reload: the entry is also updated when
+    # refreshed tokens are persisted, and a reload there would loop.
+    entry.async_on_unload(entry.add_update_listener(_async_entry_updated))
     await hass.config_entries.async_forward_entry_setups(
         entry,
         [Platform(p) for p in PLATFORMS],
     )
     return True
+
+
+async def _async_entry_updated(hass, entry) -> None:
+    stored = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    if stored is None:
+        return
+    coordinator = stored["coordinator"]
+    interval = _scan_interval(entry)
+    if coordinator.update_interval != interval:
+        coordinator.update_interval = interval
 
 
 def _persist_tokens(hass, entry, client) -> None:

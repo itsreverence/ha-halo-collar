@@ -16,6 +16,10 @@ DEFAULT_CLIENT_SECRET = "34fcPOX6rChDi83@"
 DEFAULT_API_BASE = "https://api.halocollar.com"
 DEFAULT_AUTH_BASE = "https://auth.halocollar.com"
 DEFAULT_TOKEN_SCOPE = "openid profile offline_access"
+
+CONF_SCAN_INTERVAL = "scan_interval"
 DEFAULT_SCAN_INTERVAL_SECONDS = 300
+MIN_SCAN_INTERVAL_SECONDS = 60
+MAX_SCAN_INTERVAL_SECONDS = 3600
 
 PLATFORMS = ["sensor", "binary_sensor", "device_tracker"]

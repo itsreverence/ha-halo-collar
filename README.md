@@ -12,13 +12,13 @@ A read-only Home Assistant custom integration that surfaces telemetry from your 
 
 This integration is intentionally **read-only** — it never modifies fences, corrections, modes, or collar behavior. For each collar on your account it exposes:
 
-- **Device tracker** — pet location when Halo reports GPS coordinates.
-- **Sensors** — battery %, battery status, remaining battery lifetime, connection type (adapter), Wi-Fi status/signal, cellular status/signal, GPS accuracy, location status, safety status, and firmware version.
+- **Device tracker** — pet location when Halo reports GPS coordinates. When the collar reports it is **indoors on its configured Wi-Fi** (where GPS is unreliable), the tracker pins the pet to `home` instead of drifting on a jittery fix.
+- **Sensors** — battery %, battery status, remaining battery lifetime, connection type (adapter), Wi-Fi status/signal, cellular status/signal, GPS accuracy, location status, safety status, firmware version, and last telemetry (when the collar last reported to the Halo cloud).
 - **Binary sensors** — connectivity (online/stale), fence breach, GPS calibration required, compass calibration required.
 
 ## Requirements
 
-- Home Assistant 2024.1 or newer.
+- Home Assistant 2024.11 or newer.
 - A Halo account with an active Pack Membership Plan and at least one paired collar (the same email/password you use in the Halo mobile app).
 
 ## Installation
@@ -50,7 +50,11 @@ If your session expires or you change your Halo password, Home Assistant will pr
 
 ### How authentication works
 
-Your credentials are exchanged with Halo's identity server (`auth.halocollar.com`) for OAuth access/refresh tokens using the password grant, the same flow the mobile app uses. Home Assistant stores the resulting tokens (and your credentials, for automatic re-authentication) in the config entry and refreshes the access token automatically. Data is polled about every 5 minutes.
+Your credentials are exchanged with Halo's identity server (`auth.halocollar.com`) for OAuth access/refresh tokens using the password grant, the same flow the mobile app uses. Home Assistant stores the resulting tokens (and your credentials, for automatic re-authentication) in the config entry and refreshes the access token automatically.
+
+### Options
+
+Data is polled every 5 minutes by default. To change this, open the integration in **Settings → Devices & Services**, click **Configure**, and set the update interval (60–3600 seconds). Shorter intervals put more load on Halo's cloud and drain nothing on the collar — the collar reports on its own schedule regardless.
 
 ## Disclaimer & safety
 

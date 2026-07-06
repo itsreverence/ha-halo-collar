@@ -1,39 +1,41 @@
-# Submitting to home-assistant/brands
+# Brand icon & logo
 
-HACS default inclusion requires the integration's domain to exist in the
-[`home-assistant/brands`](https://github.com/home-assistant/brands) repository so
-Home Assistant can show an icon/logo. This is a separate PR from the HACS default
-submission and must be merged first.
+Home Assistant no longer accepts brand images for **custom** integrations in the
+[`home-assistant/brands`](https://github.com/home-assistant/brands) repository —
+PRs there are auto-closed. Starting with Home Assistant 2026.3, custom
+integrations ship their own brand images inside the integration directory
+instead. See the
+[announcement](https://developers.home-assistant.io/blog/2026/02/24/brands-proxy-api)
+and the [brand images docs](https://developers.home-assistant.io/docs/core/integration/brand_images/).
 
-## What you need
+## What to do for this integration
 
-Create the following PNG assets (transparent background, trimmed to content):
+Add PNG assets (transparent background, trimmed to content) to a `brand/`
+folder inside the integration:
 
-| File     | Size (max)         | Notes                                  |
-| -------- | ------------------ | -------------------------------------- |
-| `icon.png`  | 256x256 (square) | Required. Also provide `icon@2x.png` at 512x512. |
-| `logo.png`  | 128–256 tall     | Optional wordmark. Also `logo@2x.png` at 2x.     |
+```text
+custom_components/halo_collar/brand/icon.png        # required, square, max 256x256
+custom_components/halo_collar/brand/icon@2x.png     # optional, 512x512
+custom_components/halo_collar/brand/logo.png        # optional wordmark
+custom_components/halo_collar/brand/logo@2x.png     # optional, 2x logo
+```
 
-Guidelines: <https://github.com/home-assistant/brands#guidelines>
+Dark-theme variants (`dark_icon.png`, `dark_logo.png`, and their `@2x`
+versions) are also supported. No manifest changes or extra configuration are
+needed — Home Assistant picks the files up automatically and serves them via
+`/api/brands/integration/halo_collar/icon.png`. Local images take priority over
+anything on the brands CDN.
 
 > Use only artwork you have the right to publish. Do not copy Halo Collar's
 > trademarked logo unless permitted; a neutral, original icon is safest for an
 > unofficial integration.
 
-## Directory layout in the brands repo
+## Notes
 
-Because this is a custom integration, place the assets under `custom_integrations`:
-
-```text
-custom_integrations/halo_collar/icon.png
-custom_integrations/halo_collar/icon@2x.png
-custom_integrations/halo_collar/logo.png        # optional
-custom_integrations/halo_collar/logo@2x.png     # optional
-```
-
-## Steps
-
-1. Fork `home-assistant/brands`.
-2. Add the files above under `custom_integrations/halo_collar/`.
-3. Open a PR. CI validates dimensions and transparency.
-4. Once merged, proceed with the `hacs/default` PR (see `docs/WORKFLOW.md`).
+- Users need Home Assistant 2026.3 or newer to see the icon; on older versions
+  the `brand/` folder is simply ignored and a placeholder is shown.
+- The HACS dashboard may still show an "icon not available" placeholder for
+  integrations using local brand images — HACS is migrating to the new brands
+  proxy (see [hacs/integration#5171](https://github.com/hacs/integration/issues/5171)).
+  This does not affect the icon shown in Settings → Devices & Services, and it
+  does not block a `hacs/default` submission.

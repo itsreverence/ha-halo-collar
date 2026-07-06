@@ -44,11 +44,32 @@ def parse_timestamp(value: str | None) -> datetime | None:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
+def last_telemetry(collar: dict[str, Any]) -> datetime | None:
+    """Return when the collar last reported telemetry to the Halo cloud."""
+    return parse_timestamp(nested(collar, "telemetry", "manifest", "timestamp"))
+
+
 def is_online(collar: dict[str, Any], *, now: datetime | None = None) -> bool:
-    timestamp = parse_timestamp(nested(collar, "telemetry", "manifest", "timestamp"))
+    timestamp = last_telemetry(collar)
     if timestamp is None:
         return False
     return ((now or datetime.now(UTC)) - timestamp).total_seconds() <= STALE_AFTER_SECONDS
+
+
+def indoors_on_wifi(collar: dict[str, Any]) -> bool:
+    """Return True when the collar reports it is indoors on its configured Wi-Fi.
+
+    GPS is unreliable indoors, so this is used by the device tracker to pin the
+    pet to Home instead of drifting on a jittery fix.
+    """
+    status = nested(collar, "petInfo", "telemetry", "gpsAccuracyStatus")
+    adapter = telemetry(collar, "currentAdapter")
+    return (
+        isinstance(status, str)
+        and status.strip().lower() == "indoors"
+        and isinstance(adapter, str)
+        and adapter.strip().lower() == "wifi"
+    )
 
 
 def pretty_status(value: Any) -> Any:
@@ -88,4 +109,5 @@ def sensor_values(collar: dict[str, Any]) -> dict[str, Any]:
         ),
         "safety_status": pretty_status(nested(collar, "petInfo", "safetyStatus")),
         "firmware": nested(collar, "firmware", "formattedVersion"),
+        "last_telemetry": last_telemetry(collar),
     }
