@@ -1,0 +1,42 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Halo Collar",
+        "description": "Paste a token JSON bundle from the local Halo auth probe. This prototype is read-only.",
+        "data": {
+          "name": "Name",
+          "token_json": "Token JSON",
+          "client_id": "OAuth client ID",
+          "client_secret": "OAuth client secret"
+        }
+      }
+    },
+    "error": {
+      "invalid_json": "Token JSON is invalid.",
+      "missing_refresh_token": "Token JSON must include refresh_token."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "battery": {"name": "Battery"},
+      "battery_status": {"name": "Battery status"},
+      "remaining_battery_lifetime": {"name": "Remaining battery lifetime"},
+      "current_adapter": {"name": "Current adapter"},
+      "wifi_status": {"name": "Wi-Fi status"},
+      "wifi_signal": {"name": "Wi-Fi signal"},
+      "cellular_status": {"name": "Cellular status"},
+      "cellular_signal": {"name": "Cellular signal"},
+      "gps_accuracy": {"name": "GPS accuracy"},
+      "gps_accuracy_status": {"name": "GPS accuracy status"},
+      "safety_status": {"name": "Safety status"},
+      "firmware": {"name": "Firmware"}
+    },
+    "binary_sensor": {
+      "online": {"name": "Online"},
+      "fence_breach": {"name": "Fence breach"},
+      "gps_calibration_required": {"name": "GPS calibration required"},
+      "compass_calibration_required": {"name": "Compass calibration required"}
+    }
+  }
+}
