@@ -15,7 +15,7 @@ DEFAULT_CLIENT_ID = "halo.app.android"
 DEFAULT_CLIENT_SECRET = "34fcPOX6rChDi83@"
 DEFAULT_API_BASE = "https://api.halocollar.com"
 DEFAULT_AUTH_BASE = "https://auth.halocollar.com"
-DEFAULT_TOKEN_SCOPE = "openid offline_access"
+DEFAULT_TOKEN_SCOPE = "openid email offline_access api.dogpark"
 
 CONF_SCAN_INTERVAL = "scan_interval"
 DEFAULT_SCAN_INTERVAL_SECONDS = 300
