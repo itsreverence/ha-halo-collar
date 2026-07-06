@@ -4,7 +4,7 @@ import time
 
 import pytest
 
-from custom_components.halo_collar.api import HaloApiClient, HaloAuthError
+from custom_components.halo_collar.api import HaloApiClient, HaloApiError, HaloAuthError
 
 
 class FakeResponse:
@@ -112,3 +112,77 @@ async def test_login_raises_auth_error_on_bad_credentials():
 
     with pytest.raises(HaloAuthError):
         await client.async_login("user@example.com", "wrong", scope="openid")
+
+
+class SequencedSession(FakeSession):
+    """Session whose GETs walk through a scripted list; the last item repeats."""
+
+    def __init__(self, get_results, token_status=200):
+        super().__init__(token_status=token_status)
+        self._get_results = list(get_results)
+
+    async def get(self, url, headers=None):
+        self.gets.append((url, headers))
+        result = self._get_results.pop(0) if len(self._get_results) > 1 else self._get_results[0]
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+
+@pytest.fixture(autouse=True)
+def _no_backoff(monkeypatch):
+    monkeypatch.setattr("custom_components.halo_collar.api.RETRY_BACKOFF_SECONDS", (0.0, 0.0))
+
+
+@pytest.mark.asyncio
+async def test_retries_transient_server_errors_then_succeeds():
+    session = SequencedSession(
+        [
+            FakeResponse(503, {"error": "unavailable"}),
+            FakeResponse(429, {"error": "rate limited"}),
+            FakeResponse(200, {"ok": True}),
+        ]
+    )
+    client = _new_client(session)
+
+    assert await client.async_get("/pet/my") == {"ok": True}
+    assert len(session.gets) == 3
+
+
+@pytest.mark.asyncio
+async def test_raises_api_error_after_exhausting_retries():
+    session = SequencedSession([FakeResponse(503, {"error": "unavailable"})])
+    client = _new_client(session)
+
+    with pytest.raises(HaloApiError, match="HTTP 503"):
+        await client.async_get("/pet/my")
+    assert len(session.gets) == 3
+
+
+@pytest.mark.asyncio
+async def test_timeouts_are_wrapped_as_api_errors():
+    session = SequencedSession([TimeoutError("timed out")])
+    client = _new_client(session)
+
+    with pytest.raises(HaloApiError):
+        await client.async_get("/pet/my")
+    assert len(session.gets) == 3
+
+
+@pytest.mark.asyncio
+async def test_persistent_401_after_refresh_raises_auth_error():
+    session = SequencedSession([FakeResponse(401, {"error": "unauthorized"})])
+    client = _new_client(session)
+
+    with pytest.raises(HaloAuthError):
+        await client.async_get("/pet/my")
+
+
+@pytest.mark.asyncio
+async def test_token_endpoint_outage_is_not_an_auth_error():
+    session = FakeSession(token_status=503)
+    client = _new_client(session)
+
+    with pytest.raises(HaloApiError) as excinfo:
+        await client.async_login("user@example.com", "hunter2", scope="openid")
+    assert not isinstance(excinfo.value, HaloAuthError)

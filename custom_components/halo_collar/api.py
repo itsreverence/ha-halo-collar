@@ -1,13 +1,21 @@
 from __future__ import annotations
 
+import asyncio
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
+
+import aiohttp
 
 if TYPE_CHECKING:
     from aiohttp import ClientSession
 
 TOKEN_REFRESH_SKEW_SECONDS = 60
+REQUEST_TIMEOUT_SECONDS = 30
+# Transient statuses worth retrying; anything else surfaces immediately.
+RETRYABLE_STATUS = (429, 500, 502, 503, 504)
+# Delays between attempts; total attempts = len(RETRY_BACKOFF_SECONDS) + 1.
+RETRY_BACKOFF_SECONDS = (1.0, 3.0)
 
 
 class HaloApiError(Exception):
@@ -73,20 +81,38 @@ class HaloApiClient:
 
     async def async_get(self, path: str) -> Any:
         await self._async_refresh_if_needed()
-        response = await self._session.get(
-            f"{self._api_base}{path}",
-            headers=self._headers(),
-        )
+        response = await self._async_get_with_retry(path)
         if response.status == 401:
+            # Access token rejected despite looking valid; refresh once and retry.
             await self.async_refresh_token()
-            response = await self._session.get(
-                f"{self._api_base}{path}",
-                headers=self._headers(),
-            )
+            response = await self._async_get_with_retry(path)
+            if response.status == 401:
+                raise HaloAuthError(f"GET {path} unauthorized even after a token refresh")
         if response.status >= 400:
             text = await response.text()
             raise HaloApiError(f"GET {path} failed: HTTP {response.status}: {text[:200]}")
         return await response.json(content_type=None)
+
+    async def _async_get_with_retry(self, path: str) -> Any:
+        """GET with a short backoff for timeouts, connection errors, 429s, and 5xx."""
+        attempts = len(RETRY_BACKOFF_SECONDS) + 1
+        for attempt in range(attempts):
+            if attempt:
+                await asyncio.sleep(RETRY_BACKOFF_SECONDS[attempt - 1])
+            try:
+                async with asyncio.timeout(REQUEST_TIMEOUT_SECONDS):
+                    response = await self._session.get(
+                        f"{self._api_base}{path}",
+                        headers=self._headers(),
+                    )
+            except (TimeoutError, aiohttp.ClientError) as err:
+                if attempt == attempts - 1:
+                    raise HaloApiError(f"GET {path} failed: {err!r}") from err
+                continue
+            if response.status in RETRYABLE_STATUS and attempt < attempts - 1:
+                continue
+            return response
+        raise AssertionError("unreachable")
 
     async def _async_refresh_if_needed(self) -> None:
         if not self._access_token or time.time() >= self._expires_at - TOKEN_REFRESH_SKEW_SECONDS:
@@ -120,11 +146,19 @@ class HaloApiClient:
         )
 
     async def _async_token_request(self, data: dict[str, str]) -> None:
-        response = await self._session.post(
-            f"{self._auth_base}/connect/token",
-            data=data,
-            headers={"Accept": "application/json"},
-        )
+        try:
+            async with asyncio.timeout(REQUEST_TIMEOUT_SECONDS):
+                response = await self._session.post(
+                    f"{self._auth_base}/connect/token",
+                    data=data,
+                    headers={"Accept": "application/json"},
+                )
+        except (TimeoutError, aiohttp.ClientError) as err:
+            raise HaloApiError(f"Token request failed: {err!r}") from err
+        if response.status >= 500:
+            # Identity-server outage, not bad credentials; must not trigger reauth.
+            text = await response.text()
+            raise HaloApiError(f"Token endpoint error: HTTP {response.status}: {text[:200]}")
         payload = await response.json(content_type=None)
         if response.status >= 400:
             raise HaloAuthError(f"Token request failed: HTTP {response.status}: {payload}")

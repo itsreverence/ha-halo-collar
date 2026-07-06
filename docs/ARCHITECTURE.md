@@ -12,7 +12,8 @@ Home Assistant config entry (email + password + stored tokens)
      -> OAuth password grant on first login (auth.halocollar.com/connect/token)
      -> refresh the access token when needed
      -> GET /pet/my, /collar/my, /subscription/my, /system/server-date-time
-  -> DataUpdateCoordinator polls every 300 seconds
+     -> 30s request timeout; retries 429/5xx/timeouts with short backoff
+  -> DataUpdateCoordinator polls every 300 seconds (60-3600s via options flow)
      -> persists refreshed tokens back to the config entry
      -> raises ConfigEntryAuthFailed to trigger reauth when credentials fail
   -> platforms expose read-only entities
@@ -20,9 +21,9 @@ Home Assistant config entry (email + password + stored tokens)
 
 ## Platforms
 
-- `sensor`: battery, battery status, remaining battery lifetime, connection type (adapter), Wi-Fi/cellular status and signal, GPS accuracy, location status, safety status, firmware.
+- `sensor`: battery, battery status, remaining battery lifetime, connection type (adapter), Wi-Fi/cellular status and signal, GPS accuracy, location status, safety status, firmware, last telemetry timestamp.
 - `binary_sensor`: connectivity, fence breach, GPS calibration required, compass calibration required.
-- `device_tracker`: pet/collar GPS tracker when Halo returns usable coordinates.
+- `device_tracker`: pet/collar GPS tracker when Halo returns usable coordinates; pins the pet to `home` while the collar reports indoors on its configured Wi-Fi (GPS is unreliable indoors).
 
 ## Authentication
 
@@ -36,8 +37,15 @@ The repository must not contain real user access/refresh tokens, account credent
 
 v1 is telemetry-only. Do not add correction, fence modification, collar wake/control, bind/unbind, or any other write/control endpoint without a separate explicit review.
 
+## Error handling
+
+`HaloAuthError` (subclass of `HaloApiError`) means credentials/tokens were
+rejected and triggers reauth; everything transient (timeouts, connection
+errors, 429s, 5xx — including 5xx from the token endpoint) is `HaloApiError`
+and surfaces as a temporary `UpdateFailed` without prompting for credentials.
+GET requests retry twice with a short backoff before giving up.
+
 ## Possible future work
 
-- Add telemetry freshness sensors (`last telemetry`, `next telemetry`, stale status).
-- Improve tracker fallback when Halo reports an indoor/non-GPS location without lat/lon.
-- Options flow for poll interval.
+- Add a `next telemetry` / stale-countdown sensor if a suitable field is found
+  in the Halo payload.
