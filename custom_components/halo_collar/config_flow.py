@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import json
+import logging
+import time
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
 import voluptuous as vol
@@ -30,6 +34,9 @@ from .const import (
     MIN_SCAN_INTERVAL_SECONDS,
 )
 
+_LOGGER = logging.getLogger(__name__)
+AUTH_DEBUG_FILENAME = "halo_collar_auth_debug.json"
+
 
 def _client(hass, client_id: str, client_secret: str) -> HaloApiClient:
     return HaloApiClient(
@@ -42,6 +49,18 @@ def _client(hass, client_id: str, client_secret: str) -> HaloApiClient:
         api_base=DEFAULT_API_BASE,
         auth_base=DEFAULT_AUTH_BASE,
     )
+
+
+def _write_auth_debug(hass, *, error_type: str, error: Exception) -> None:
+    """Write the last sanitized setup/auth failure to a local debug file."""
+    payload = {
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "type": error_type,
+        "message": str(error)[:1000],
+    }
+    path = Path(hass.config.path(AUTH_DEBUG_FILENAME))
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    _LOGGER.warning("Halo Collar setup failed; wrote sanitized auth debug to %s", path)
 
 
 class HaloCollarConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -86,9 +105,15 @@ class HaloCollarConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             self._abort_if_unique_id_configured()
             try:
                 data = await self._async_validate(user_input)
-            except HaloAuthError:
+            except HaloAuthError as err:
+                await self.hass.async_add_executor_job(
+                    _write_auth_debug, self.hass, error_type="invalid_auth", error=err
+                )
                 errors["base"] = "invalid_auth"
-            except HaloApiError:
+            except HaloApiError as err:
+                await self.hass.async_add_executor_job(
+                    _write_auth_debug, self.hass, error_type="cannot_connect", error=err
+                )
                 errors["base"] = "cannot_connect"
             else:
                 title = user_input.get(CONF_NAME) or "Halo Collar"
@@ -125,9 +150,15 @@ class HaloCollarConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             }
             try:
                 data = await self._async_validate(merged)
-            except HaloAuthError:
+            except HaloAuthError as err:
+                await self.hass.async_add_executor_job(
+                    _write_auth_debug, self.hass, error_type="invalid_auth", error=err
+                )
                 errors["base"] = "invalid_auth"
-            except HaloApiError:
+            except HaloApiError as err:
+                await self.hass.async_add_executor_job(
+                    _write_auth_debug, self.hass, error_type="cannot_connect", error=err
+                )
                 errors["base"] = "cannot_connect"
             else:
                 return self.async_update_reload_and_abort(
