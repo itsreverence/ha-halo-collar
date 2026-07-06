@@ -22,8 +22,10 @@ Home Assistant config entry (email + stored tokens; password is never persisted)
 ## Platforms
 
 - `sensor`: battery, battery status, remaining battery lifetime, connection type (adapter), Wi-Fi/cellular status and signal, GPS accuracy, location status, safety status, firmware, last telemetry timestamp.
-- `binary_sensor`: connectivity, fence breach, GPS calibration required, compass calibration required.
+- `binary_sensor`: connectivity (staleness threshold configurable via options), fence breach, GPS calibration required, compass calibration required.
 - `device_tracker`: pet/collar GPS tracker when Halo returns usable coordinates; pins the pet to `home` while the collar reports indoors on its configured Wi-Fi (GPS is unreliable indoors).
+- `event`: fence breach event entity for automation triggers.
+- `diagnostics`: redacted config-entry diagnostics (tokens, serials, coordinates, names removed).
 
 ## Authentication
 

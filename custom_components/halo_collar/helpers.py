@@ -3,6 +3,38 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+REDACTED = "**REDACTED**"
+
+REDACT_KEYS = frozenset(
+    {
+        "access_token",
+        "refresh_token",
+        "client_secret",
+        "password",
+        "email",
+        "token",
+        "serialnumber",
+        "latitude",
+        "longitude",
+        "location",
+        "lastlocation",
+        "address",
+        "phone",
+        "phonenumber",
+        "name",
+        "firstname",
+        "lastname",
+        "userid",
+        "accountid",
+        "deviceid",
+        "imei",
+        "iccid",
+        "ssid",
+        "macaddress",
+        "wifiname",
+    }
+)
+
 STALE_AFTER_SECONDS = 900
 
 _STATUS_LABELS = {
@@ -23,6 +55,22 @@ _STATUS_LABELS = {
     "unknown": "Unknown",
     "noissue": "No issue",
 }
+
+
+def redact(data: Any, keys: frozenset[str] = REDACT_KEYS) -> Any:
+    """Recursively replace values of sensitive keys with '**REDACTED**'.
+
+    A matching key is redacted wholesale even when its value is a container
+    (e.g. ``location: {...}``), so unknown nested key names cannot leak.
+    """
+    if isinstance(data, dict):
+        return {
+            key: (REDACTED if isinstance(key, str) and key.lower() in keys else redact(value, keys))
+            for key, value in data.items()
+        }
+    if isinstance(data, list):
+        return [redact(item, keys) for item in data]
+    return data
 
 
 def telemetry(collar: dict[str, Any], key: str) -> Any:
@@ -49,11 +97,16 @@ def last_telemetry(collar: dict[str, Any]) -> datetime | None:
     return parse_timestamp(nested(collar, "telemetry", "manifest", "timestamp"))
 
 
-def is_online(collar: dict[str, Any], *, now: datetime | None = None) -> bool:
+def is_online(
+    collar: dict[str, Any],
+    *,
+    now: datetime | None = None,
+    stale_after: float = STALE_AFTER_SECONDS,
+) -> bool:
     timestamp = last_telemetry(collar)
     if timestamp is None:
         return False
-    return ((now or datetime.now(UTC)) - timestamp).total_seconds() <= STALE_AFTER_SECONDS
+    return ((now or datetime.now(UTC)) - timestamp).total_seconds() <= stale_after
 
 
 def indoors_on_wifi(collar: dict[str, Any]) -> bool:

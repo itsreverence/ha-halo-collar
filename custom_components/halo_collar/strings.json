@@ -35,10 +35,12 @@
       "init": {
         "title": "Halo Collar options",
         "data": {
-          "scan_interval": "Update interval (seconds)"
+          "scan_interval": "Update interval (seconds)",
+          "stale_after": "Offline after (seconds)"
         },
         "data_description": {
-          "scan_interval": "How often to poll the Halo cloud for new telemetry. Between 60 and 3600 seconds; the collar itself typically reports every few minutes."
+          "scan_interval": "How often to poll the Halo cloud for new telemetry. Between 60 and 3600 seconds; the collar itself typically reports every few minutes.",
+          "stale_after": "How long after the collar's last report the connectivity sensor turns off. Between 120 and 86400 seconds."
         }
       }
     }
@@ -64,6 +66,9 @@
       "fence_breach": {"name": "Fence breach"},
       "gps_calibration_required": {"name": "GPS calibration required"},
       "compass_calibration_required": {"name": "Compass calibration required"}
+    },
+    "event": {
+      "fence_breach": {"name": "Fence breach event"}
     }
   }
 }

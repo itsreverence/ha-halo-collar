@@ -87,6 +87,9 @@ async def _async_entry_updated(hass, entry) -> None:
     interval = _scan_interval(entry)
     if coordinator.update_interval != interval:
         coordinator.update_interval = interval
+    # Entities read options (e.g. staleness threshold) at evaluation time; push a
+    # state refresh so option changes apply without waiting for the next poll.
+    coordinator.async_update_listeners()
 
 
 def _persist_tokens(hass, entry, client) -> None:

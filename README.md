@@ -15,6 +15,8 @@ This integration is intentionally **read-only** — it never modifies fences, co
 - **Device tracker** — pet location when Halo reports GPS coordinates. When the collar reports it is **indoors on its configured Wi-Fi** (where GPS is unreliable), the tracker pins the pet to `home` instead of drifting on a jittery fix.
 - **Sensors** — battery %, battery status, remaining battery lifetime, connection type (adapter), Wi-Fi status/signal, cellular status/signal, GPS accuracy, location status, safety status, firmware version, and last telemetry (when the collar last reported to the Halo cloud).
 - **Binary sensors** — connectivity (online/stale), fence breach, GPS calibration required, compass calibration required.
+- **Events** — a fence breach event entity you can use directly as an automation trigger.
+- **Diagnostics** — download redacted diagnostics (tokens, serials, locations, and names removed) from the integration page to attach to bug reports.
 
 ## Requirements
 
@@ -54,7 +56,10 @@ Your credentials are exchanged with Halo's identity server (`auth.halocollar.com
 
 ### Options
 
-Data is polled every 5 minutes by default. To change this, open the integration in **Settings → Devices & Services**, click **Configure**, and set the update interval (60–3600 seconds). Shorter intervals put more load on Halo's cloud and drain nothing on the collar — the collar reports on its own schedule regardless.
+Open the integration in **Settings → Devices & Services** and click **Configure** to set:
+
+- **Update interval** (60–3600 seconds, default 300) — how often the Halo cloud is polled. Shorter intervals put more load on Halo's cloud and drain nothing on the collar; the collar reports on its own schedule regardless.
+- **Offline after** (120–86400 seconds, default 900) — how long after the collar's last report the connectivity sensor flips to offline.
 
 ## Disclaimer & safety
 

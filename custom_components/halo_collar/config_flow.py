@@ -19,15 +19,19 @@ from .const import (
     CONF_PASSWORD,
     CONF_REFRESH_TOKEN,
     CONF_SCAN_INTERVAL,
+    CONF_STALE_AFTER,
     DEFAULT_API_BASE,
     DEFAULT_AUTH_BASE,
     DEFAULT_CLIENT_ID,
     DEFAULT_CLIENT_SECRET,
     DEFAULT_SCAN_INTERVAL_SECONDS,
+    DEFAULT_STALE_AFTER_SECONDS,
     DEFAULT_TOKEN_SCOPE,
     DOMAIN,
     MAX_SCAN_INTERVAL_SECONDS,
+    MAX_STALE_AFTER_SECONDS,
     MIN_SCAN_INTERVAL_SECONDS,
+    MIN_STALE_AFTER_SECONDS,
 )
 
 
@@ -152,14 +156,24 @@ class HaloCollarOptionsFlow(config_entries.OptionsFlow):
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
 
-        current = self.config_entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL_SECONDS)
+        options = self.config_entry.options
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema(
                 {
-                    vol.Required(CONF_SCAN_INTERVAL, default=current): vol.All(
+                    vol.Required(
+                        CONF_SCAN_INTERVAL,
+                        default=options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL_SECONDS),
+                    ): vol.All(
                         vol.Coerce(int),
                         vol.Range(min=MIN_SCAN_INTERVAL_SECONDS, max=MAX_SCAN_INTERVAL_SECONDS),
+                    ),
+                    vol.Required(
+                        CONF_STALE_AFTER,
+                        default=options.get(CONF_STALE_AFTER, DEFAULT_STALE_AFTER_SECONDS),
+                    ): vol.All(
+                        vol.Coerce(int),
+                        vol.Range(min=MIN_STALE_AFTER_SECONDS, max=MAX_STALE_AFTER_SECONDS),
                     ),
                 }
             ),

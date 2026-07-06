@@ -22,4 +22,10 @@ DEFAULT_SCAN_INTERVAL_SECONDS = 300
 MIN_SCAN_INTERVAL_SECONDS = 60
 MAX_SCAN_INTERVAL_SECONDS = 3600
 
-PLATFORMS = ["sensor", "binary_sensor", "device_tracker"]
+# How long after the last collar report the connectivity sensor turns "offline".
+CONF_STALE_AFTER = "stale_after"
+DEFAULT_STALE_AFTER_SECONDS = 900
+MIN_STALE_AFTER_SECONDS = 120
+MAX_STALE_AFTER_SECONDS = 86400
+
+PLATFORMS = ["sensor", "binary_sensor", "device_tracker", "event"]
