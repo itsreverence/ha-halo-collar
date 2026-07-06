@@ -7,10 +7,9 @@ Build a public-quality Home Assistant custom integration for Halo Collar cloud t
 ## Guardrails
 
 - Keep v1 read-only: expose pet/collar telemetry only. Do not implement correction, fence modification, mode changes, bind/unbind, or other write/control endpoints.
-- Keep the integration generic and publishable; do not bake in Larry/Ricky Home entity IDs, dog names, token values, serials, or locations.
+- Keep the integration generic and publishable; do not bake in specific accounts, entity IDs, dog names, token values, serials, or locations.
 - Treat Halo's mobile/cloud API as an unofficial/private API. Keep docs honest and avoid implying vendor support.
-- Do not commit Halo refresh/access tokens. Local token bundles belong outside the repo.
-- Avoid hardcoding extracted secrets in public docs. For the initial prototype, allow users to provide required OAuth client details through config/options.
+- Do not commit real Halo refresh/access tokens or account credentials. The only credential in the repo is the static, app-level OAuth `client_id`/`client_secret` extracted from the Halo app, which is overridable in the config flow.
 
 ## Verification
 

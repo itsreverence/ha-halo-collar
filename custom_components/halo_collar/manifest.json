@@ -1,7 +1,7 @@
 {
   "domain": "halo_collar",
   "name": "Halo Collar",
-  "codeowners": [],
+  "codeowners": ["@itsreverence"],
   "config_flow": true,
   "documentation": "https://github.com/itsreverence/ha-halo-collar",
   "iot_class": "cloud_polling",

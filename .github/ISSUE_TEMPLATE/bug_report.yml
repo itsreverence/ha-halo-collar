@@ -1,0 +1,59 @@
+name: Bug Report
+description: Report a problem with the Halo Collar integration
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug.
+
+        **Note:** This is an unofficial Home Assistant integration for Halo Collar cloud telemetry. It is not affiliated with, endorsed by, or supported by Halo Collar or its parent company.
+
+  - type: input
+    id: ha_version
+    attributes:
+      label: Home Assistant version
+      description: The version of Home Assistant you are running (e.g. 2026.1.0)
+      placeholder: "2026.1.0"
+    validations:
+      required: true
+
+  - type: input
+    id: integration_version
+    attributes:
+      label: Integration version
+      description: The version of the Halo Collar integration (from HACS or the manifest)
+      placeholder: "1.0.0"
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: A clear and concise description of the bug
+      placeholder: What went wrong?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Steps to reproduce the behavior
+      placeholder: |
+        1. Go to '...'
+        2. Click on '...'
+        3. See error
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log output
+      description: |
+        Enable debug logging for the integration (Settings → Devices & services → Halo Collar → Enable debug logging), reproduce the issue, then paste relevant lines from **Settings → System → Logs**.
+      render: shell
+      placeholder: Paste log output here

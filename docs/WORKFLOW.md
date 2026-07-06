@@ -6,63 +6,48 @@
 uv sync --extra dev
 uv run pytest -q
 uv run ruff check .
+uv run ruff format --check .
 python -m compileall custom_components tests
 ```
 
-## Private Home Assistant deploy loop
+The unit tests do not require a Home Assistant install; they exercise the API
+client and telemetry extractors directly. `hassfest` and HACS validation run in
+CI via GitHub Actions (`.github/workflows/validate.yml`).
 
-Use Samba/HA config access to copy only the integration source under:
+## Testing in a live Home Assistant instance
+
+To try changes against a real instance, copy only the integration source into
+your Home Assistant configuration directory:
 
 ```text
 /config/custom_components/halo_collar/
 ```
 
-Recommended private-test deploy steps:
+Suggested loop:
 
-1. Back up the live `/config/custom_components/halo_collar` directory.
-2. Upload changed source files and translations.
+1. Back up the existing `/config/custom_components/halo_collar` directory.
+2. Copy the changed source files and translations.
 3. Remove stale `__pycache__` files for changed modules.
-4. Re-fetch uploaded files and compare hashes with local files.
-5. Run `homeassistant.check_config`.
-6. Restart Home Assistant when Python, config flow, manifest, or translations changed.
-7. Verify live entities after HA finishes booting.
+4. Run `homeassistant.check_config`.
+5. Restart Home Assistant when Python, config flow, manifest, or translations changed.
+6. Verify entities after Home Assistant finishes booting.
 
-## Current private prototype verification
+## Release checklist
 
-Known-good local gates after the cleanup pass:
+Before cutting a public release / GitHub tag:
 
-```bash
-uv run pytest -q              # 3 passed
-uv run ruff check .           # All checks passed
-python -m compileall custom_components tests
-```
+- Bump `version` in `custom_components/halo_collar/manifest.json` and
+  `pyproject.toml`.
+- Confirm `uv run pytest -q`, `uv run ruff check .`, and
+  `uv run ruff format --check .` pass.
+- Confirm the `Validate` workflow (hassfest + HACS) is green.
+- Create a GitHub release/tag so HACS can offer a versioned download.
 
-Known-good live checks after deploy/restart:
+## HACS default submission
 
-- `sensor.cowboy_battery_status` reports a human label such as `Not charging`.
-- `sensor.cowboy_battery_runtime` reports hours (`h`) instead of raw seconds.
-- `sensor.cowboy_wifi_status` reports `Connected` instead of `socketconnected`.
-- `sensor.cowboy_location_status` reports `Indoors` when Halo does not provide GPS coordinates.
-- `binary_sensor.cowboy_fence_breach` and calibration problem sensors exist with explicit entity IDs.
-
-## Next stabilization pass
-
-1. Add telemetry freshness sensors:
-   - Last telemetry timestamp
-   - Seconds/minutes until next expected telemetry
-   - Stale/online status based on manifest timestamp
-2. Improve device tracker fallback:
-   - Use lat/lon only when present
-   - Keep `Location status` as the user-readable state for `Indoors`/non-GPS situations
-   - Do not invent coordinates from vague status values
-3. Add focused extractor tests for stale timestamps and location fallback payload shapes.
-4. Dogfood in Larry's Home Assistant for 24–48 hours before public/HACS hardening.
-
-## Public/HACS prep reminders
-
-Keep public prep in a separate pass/branch/chat. Before making the repo public:
-
-- Run a secret scan over tracked files and git history.
-- Remove real token bundles and redacted-live payloads from the repo.
-- Decide whether the bundled OAuth client details are acceptable to publish or should move behind user-provided config/auth docs.
-- Add GitHub Actions, HACS action, Hassfest, `SECURITY.md`, and public install docs.
+1. Ensure the repository is public with a description and topics.
+2. Add the `halo_collar` domain to
+   [`home-assistant/brands`](https://github.com/home-assistant/brands) (icon +
+   logo). See `docs/BRANDS.md`.
+3. Open a PR against [`hacs/default`](https://github.com/hacs/default) adding
+   `itsreverence/ha-halo-collar` to the `integration` list.

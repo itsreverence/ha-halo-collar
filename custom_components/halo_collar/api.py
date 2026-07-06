@@ -14,6 +14,10 @@ class HaloApiError(Exception):
     """Raised when Halo API calls fail."""
 
 
+class HaloAuthError(HaloApiError):
+    """Raised when Halo authentication (login or token refresh) fails."""
+
+
 @dataclass(slots=True)
 class HaloState:
     pets: list[dict[str, Any]]
@@ -91,19 +95,41 @@ class HaloApiClient:
     async def async_refresh_token(self) -> None:
         if not self._client_secret:
             raise HaloApiError("Halo OAuth client secret is required to refresh tokens")
-        response = await self._session.post(
-            f"{self._auth_base}/connect/token",
-            data={
+        await self._async_token_request(
+            {
                 "grant_type": "refresh_token",
                 "client_id": self._client_id,
                 "client_secret": self._client_secret,
                 "refresh_token": self._refresh_token,
-            },
+            }
+        )
+
+    async def async_login(self, email: str, password: str, *, scope: str) -> None:
+        """Exchange user credentials for access/refresh tokens (OAuth password grant)."""
+        if not self._client_secret:
+            raise HaloApiError("Halo OAuth client secret is required to sign in")
+        await self._async_token_request(
+            {
+                "grant_type": "password",
+                "client_id": self._client_id,
+                "client_secret": self._client_secret,
+                "username": email,
+                "password": password,
+                "scope": scope,
+            }
+        )
+
+    async def _async_token_request(self, data: dict[str, str]) -> None:
+        response = await self._session.post(
+            f"{self._auth_base}/connect/token",
+            data=data,
             headers={"Accept": "application/json"},
         )
         payload = await response.json(content_type=None)
         if response.status >= 400:
-            raise HaloApiError(f"Token refresh failed: HTTP {response.status}: {payload}")
+            raise HaloAuthError(f"Token request failed: HTTP {response.status}: {payload}")
+        if not isinstance(payload, dict) or "access_token" not in payload:
+            raise HaloAuthError(f"Token request returned no access_token: {payload}")
         self._access_token = payload["access_token"]
         self._refresh_token = payload.get("refresh_token", self._refresh_token)
         self._expires_at = (
