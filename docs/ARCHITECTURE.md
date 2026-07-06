@@ -7,7 +7,7 @@
 ## Runtime shape
 
 ```text
-Home Assistant config entry (email + password + stored tokens)
+Home Assistant config entry (email + stored tokens; password is never persisted)
   -> HaloApiClient
      -> OAuth password grant on first login (auth.halocollar.com/connect/token)
      -> refresh the access token when needed

@@ -50,7 +50,7 @@ If your session expires or you change your Halo password, Home Assistant will pr
 
 ### How authentication works
 
-Your credentials are exchanged with Halo's identity server (`auth.halocollar.com`) for OAuth access/refresh tokens using the password grant, the same flow the mobile app uses. Home Assistant stores the resulting tokens (and your credentials, for automatic re-authentication) in the config entry and refreshes the access token automatically.
+Your credentials are exchanged with Halo's identity server (`auth.halocollar.com`) for OAuth access/refresh tokens using the password grant, the same flow the mobile app uses. Your password is **not stored** — Home Assistant keeps only the resulting tokens in the config entry and refreshes the access token automatically. If the refresh token ever becomes invalid, you'll be prompted to re-enter your credentials.
 
 ### Options
 
