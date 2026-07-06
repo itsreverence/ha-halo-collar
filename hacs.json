@@ -1,5 +1,6 @@
 {
   "name": "Halo Collar",
+  "domains": ["halo_collar"],
   "render_readme": true,
   "homeassistant": "2024.11.0"
 }
