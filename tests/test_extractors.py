@@ -21,9 +21,12 @@ def test_sensor_extractors_cover_live_payload_shape():
     values = sensor_values(collar)
 
     assert values["battery"] == 80
-    assert values["wifi_status"] == "socketconnected"
+    assert values["battery_status"] == "Not charging"
+    assert values["remaining_battery_lifetime"] == 32.6
+    assert values["current_adapter"] == "Wi-Fi"
+    assert values["wifi_status"] == "Connected"
     assert values["cellular_signal"] == -87
-    assert values["gps_accuracy_status"] == "indoors"
+    assert values["gps_accuracy_status"] == "Indoors"
     assert values["firmware"] == "03.06.64"
 
 
