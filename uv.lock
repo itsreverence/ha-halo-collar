@@ -267,7 +267,7 @@ wheels = [
 
 [[package]]
 name = "ha-halo-collar"
-version = "0.2.0"
+version = "0.2.1"
 source = { virtual = "." }
 
 [package.optional-dependencies]
