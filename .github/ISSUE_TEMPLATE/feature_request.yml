@@ -8,6 +8,8 @@ body:
       value: |
         Thanks for suggesting a feature.
 
+        **Privacy:** Do not include passwords, OAuth tokens, pet names, serial numbers, precise locations, fence data, account identifiers, or raw private-API payloads in examples or screenshots.
+
         **Note:** This is an unofficial Home Assistant integration for Halo Collar cloud telemetry. It is not affiliated with, endorsed by, or supported by Halo Collar or its parent company.
 
   - type: textarea
@@ -39,4 +41,4 @@ body:
     id: context
     attributes:
       label: Additional context
-      description: Add any other context, screenshots, or examples about the feature request here
+      description: Add only redacted context, screenshots, or examples. Do not include credentials, tokens, pet names, serials, locations, fences, account identifiers, or raw API payloads.

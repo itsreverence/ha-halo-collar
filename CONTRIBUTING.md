@@ -28,7 +28,9 @@ Unit tests exercise the API client and telemetry extractors without requiring a 
 1. Back up `/config/custom_components/halo_collar`.
 2. Copy the changed integration source and translations into that directory.
 3. Remove stale `__pycache__` files for changed modules.
-4. Run `homeassistant.check_config`.
+4. Run the deployment-appropriate configuration check:
+   - Home Assistant OS/Supervised: `ha core check`
+   - Home Assistant Core environment: `python -m homeassistant --script check_config -c /config`
 5. Restart Home Assistant when Python, manifest, config-flow, or translation files changed.
 6. Confirm the expected entities populate and compare important telemetry with the official Halo app.
 

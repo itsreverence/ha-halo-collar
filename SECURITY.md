@@ -8,7 +8,7 @@ Security fixes are applied to the latest release only.
 
 Do not open a public issue containing Halo credentials, OAuth tokens, pet names, serial numbers, precise locations, fence data, private API payloads, Home Assistant secrets, or unredacted diagnostics.
 
-Use GitHub's private vulnerability-reporting or security-advisory flow for this repository. If private reporting is unavailable, contact the maintainer privately before sharing sensitive details.
+Use [GitHub private vulnerability reporting](https://github.com/itsreverence/ha-halo-collar/security/advisories/new) for this repository. Do not include sensitive details in a public issue.
 
 Include:
 
