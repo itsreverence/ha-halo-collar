@@ -1,5 +1,10 @@
 # Halo Collar for Home Assistant
 
+<p align="center">
+  <img src="custom_components/halo_collar/brand/icon.png" alt="Halo Collar integration icon" width="128" height="128">
+</p>
+
+[![Latest release](https://img.shields.io/github/v/release/itsreverence/ha-halo-collar)](https://github.com/itsreverence/ha-halo-collar/releases)
 [![HACS: Custom](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
 [![Validate](https://github.com/itsreverence/ha-halo-collar/actions/workflows/validate.yml/badge.svg)](https://github.com/itsreverence/ha-halo-collar/actions/workflows/validate.yml)
 
@@ -24,6 +29,9 @@ This integration is intentionally **read-only** — it never modifies fences, co
 - A Halo account with an active Pack Membership Plan and at least one paired collar (the same email/password you use in the Halo mobile app).
 
 ## Installation
+
+[![Open this repository in HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=itsreverence&repository=ha-halo-collar&category=integration)
+[![Add the Halo Collar integration](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=halo_collar)
 
 ### HACS (recommended)
 
@@ -66,23 +74,11 @@ Open the integration in **Settings → Devices & Services** and click **Configur
 - **Read-only by design.** This integration deliberately does not implement any write/control endpoints (fence editing, corrections, mode changes, bind/unbind, etc.). Do not rely on it for your pet's containment or safety — the official Halo app and collar are the source of truth.
 - Because it depends on an undocumented API, functionality may degrade without notice.
 
-## Development
+## Project docs
 
-```bash
-uv sync --extra dev
-uv run pytest -q
-uv run ruff check .
-uv run ruff format --check .
-```
-
-If Home Assistant test dependencies are unavailable, you can still sanity-check imports:
-
-```bash
-python -m compileall custom_components tests
-```
-
-See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and [`docs/WORKFLOW.md`](docs/WORKFLOW.md) for internals and contributor workflow.
-
-## License
-
-Released under the [MIT License](LICENSE).
+- [Support](SUPPORT.md)
+- [Security policy](SECURITY.md)
+- [Contributing](CONTRIBUTING.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Release process](docs/RELEASING.md)
+- [MIT License](LICENSE)
