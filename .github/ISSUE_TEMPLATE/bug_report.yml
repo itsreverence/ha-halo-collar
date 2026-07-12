@@ -8,6 +8,8 @@ body:
       value: |
         Thanks for taking the time to report a bug.
 
+        **Privacy:** Do not include passwords, OAuth tokens, pet names, serial numbers, precise locations, fence data, account identifiers, or raw private-API payloads. Review diagnostics and logs before posting.
+
         **Note:** This is an unofficial Home Assistant integration for Halo Collar cloud telemetry. It is not affiliated with, endorsed by, or supported by Halo Collar or its parent company.
 
   - type: input
@@ -54,6 +56,7 @@ body:
     attributes:
       label: Relevant log output
       description: |
-        Enable debug logging for the integration (Settings → Devices & services → Halo Collar → Enable debug logging), reproduce the issue, then paste relevant lines from **Settings → System → Logs**.
+        Enable debug logging for the integration (Settings → Devices & services → Halo Collar → Enable debug logging), reproduce the issue, then paste only relevant redacted lines from **Settings → System → Logs**.
+        Do not include credentials, tokens, pet names, serial numbers, coordinates, fence data, account identifiers, or raw private-API payloads.
       render: shell
       placeholder: Paste log output here

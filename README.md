@@ -1,5 +1,10 @@
 # Halo Collar for Home Assistant
 
+<p align="center">
+  <img src="custom_components/halo_collar/brand/icon.png" alt="Halo Collar integration icon" width="128" height="128">
+</p>
+
+[![Latest release](https://img.shields.io/github/v/release/itsreverence/ha-halo-collar)](https://github.com/itsreverence/ha-halo-collar/releases)
 [![HACS: Custom](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
 [![Validate](https://github.com/itsreverence/ha-halo-collar/actions/workflows/validate.yml/badge.svg)](https://github.com/itsreverence/ha-halo-collar/actions/workflows/validate.yml)
 
@@ -24,6 +29,9 @@ This integration is intentionally **read-only** — it never modifies fences, co
 - A Halo account with an active Pack Membership Plan and at least one paired collar (the same email/password you use in the Halo mobile app).
 
 ## Installation
+
+[![Open this repository in HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=itsreverence&repository=ha-halo-collar&category=integration)
+[![Add the Halo Collar integration](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=halo_collar)
 
 ### HACS (recommended)
 
@@ -50,6 +58,10 @@ The advanced *OAuth client ID/secret* fields are pre-filled with the values used
 
 If your session expires or you change your Halo password, Home Assistant will prompt you to **re-authenticate** — just re-enter your credentials.
 
+### Confirm it is working
+
+After setup, open the Halo Collar device in Home Assistant and confirm its device tracker, battery, connectivity, and last-telemetry entities are populated. Compare important location and status values with the official Halo app before using them in automations.
+
 ### How authentication works
 
 Your credentials are exchanged with Halo's identity server (`auth.halocollar.com`) for OAuth access/refresh tokens using the password grant, the same flow the mobile app uses. Your password is **not stored** — Home Assistant keeps only the resulting tokens in the config entry and refreshes the access token automatically. If the refresh token ever becomes invalid, you'll be prompted to re-enter your credentials.
@@ -66,23 +78,20 @@ Open the integration in **Settings → Devices & Services** and click **Configur
 - **Read-only by design.** This integration deliberately does not implement any write/control endpoints (fence editing, corrections, mode changes, bind/unbind, etc.). Do not rely on it for your pet's containment or safety — the official Halo app and collar are the source of truth.
 - Because it depends on an undocumented API, functionality may degrade without notice.
 
-## Development
+## Troubleshooting
 
-```bash
-uv sync --extra dev
-uv run pytest -q
-uv run ruff check .
-uv run ruff format --check .
-```
+- Restart Home Assistant after installing or updating through HACS.
+- Complete the reauthentication flow if Home Assistant prompts for it.
+- Compare important location and status values with the official Halo app.
+- For bugs, enable debug logging and download redacted diagnostics from the integration page.
 
-If Home Assistant test dependencies are unavailable, you can still sanity-check imports:
+See [SUPPORT.md](SUPPORT.md) for support routes, first checks, and sensitive-data guidance.
 
-```bash
-python -m compileall custom_components tests
-```
+## Project docs
 
-See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and [`docs/WORKFLOW.md`](docs/WORKFLOW.md) for internals and contributor workflow.
-
-## License
-
-Released under the [MIT License](LICENSE).
+- [Support](SUPPORT.md)
+- [Security policy](SECURITY.md)
+- [Contributing](CONTRIBUTING.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Release process](docs/RELEASING.md)
+- [MIT License](LICENSE)
