@@ -58,6 +58,10 @@ The advanced *OAuth client ID/secret* fields are pre-filled with the values used
 
 If your session expires or you change your Halo password, Home Assistant will prompt you to **re-authenticate** — just re-enter your credentials.
 
+### Confirm it is working
+
+After setup, open the Halo Collar device in Home Assistant and confirm its device tracker, battery, connectivity, and last-telemetry entities are populated. Compare important location and status values with the official Halo app before using them in automations.
+
 ### How authentication works
 
 Your credentials are exchanged with Halo's identity server (`auth.halocollar.com`) for OAuth access/refresh tokens using the password grant, the same flow the mobile app uses. Your password is **not stored** — Home Assistant keeps only the resulting tokens in the config entry and refreshes the access token automatically. If the refresh token ever becomes invalid, you'll be prompted to re-enter your credentials.
@@ -73,6 +77,15 @@ Open the integration in **Settings → Devices & Services** and click **Configur
 
 - **Read-only by design.** This integration deliberately does not implement any write/control endpoints (fence editing, corrections, mode changes, bind/unbind, etc.). Do not rely on it for your pet's containment or safety — the official Halo app and collar are the source of truth.
 - Because it depends on an undocumented API, functionality may degrade without notice.
+
+## Troubleshooting
+
+- Restart Home Assistant after installing or updating through HACS.
+- Complete the reauthentication flow if Home Assistant prompts for it.
+- Compare important location and status values with the official Halo app.
+- For bugs, enable debug logging and download redacted diagnostics from the integration page.
+
+See [SUPPORT.md](SUPPORT.md) for support routes, first checks, and sensitive-data guidance.
 
 ## Project docs
 
