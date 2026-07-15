@@ -26,7 +26,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
             entry,
             stored["client"],
             collar,
-            control_lock_for(stored),
+            control_lock_for(hass.data[DOMAIN], entry.entry_id),
         )
         for collar in coordinator.data.collars
     )

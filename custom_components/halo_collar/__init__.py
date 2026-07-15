@@ -124,6 +124,13 @@ def _persist_tokens(hass, entry, client) -> None:
     )
 
 
+async def async_remove_entry(hass, entry) -> None:
+    """Remove durable control state after permanent config-entry deletion."""
+    from .controls import remove_control_lock
+
+    remove_control_lock(hass.data.get(DOMAIN, {}), entry.entry_id)
+
+
 async def async_unload_entry(hass, entry) -> bool:
     from homeassistant.const import Platform
 

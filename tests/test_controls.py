@@ -15,6 +15,7 @@ from custom_components.halo_collar.controls import (
     HaloControlError,
     async_set_fence_mode,
     control_lock_for,
+    remove_control_lock,
 )
 
 
@@ -126,13 +127,41 @@ async def _execute(coordinator, client, entry, *, enabled, control_lock=None):
     )
 
 
-def test_control_lock_is_shared_by_all_entities_in_the_config_entry():
-    stored = {}
+def test_control_lock_is_shared_by_all_entities_and_survives_reload():
+    domain_data = {}
 
-    button_lock = control_lock_for(stored)
-    switch_lock = control_lock_for(stored)
+    old_setup_lock = control_lock_for(domain_data, "entry-1")
+    new_setup_lock = control_lock_for(domain_data, "entry-1")
 
-    assert button_lock is switch_lock
+    assert old_setup_lock is new_setup_lock
+    assert control_lock_for(domain_data, "entry-2") is not old_setup_lock
+
+    remove_control_lock(domain_data, "entry-1")
+    assert control_lock_for(domain_data, "entry-1") is not old_setup_lock
+
+
+@pytest.mark.asyncio
+async def test_reloaded_entity_cannot_enter_while_old_setup_holds_entry_lock():
+    domain_data = {}
+    old_setup_lock = control_lock_for(domain_data, "entry-1")
+    await old_setup_lock.acquire()
+
+    new_setup_lock = control_lock_for(domain_data, "entry-1")
+    entered = asyncio.Event()
+
+    async def new_entity_action():
+        async with new_setup_lock:
+            entered.set()
+
+    action_task = asyncio.create_task(new_entity_action())
+    await asyncio.sleep(0)
+
+    assert entered.is_set() is False
+    assert new_setup_lock is old_setup_lock
+
+    old_setup_lock.release()
+    await action_task
+    assert entered.is_set() is True
 
 
 @pytest.mark.asyncio

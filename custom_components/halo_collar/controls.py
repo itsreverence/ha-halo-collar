@@ -25,9 +25,19 @@ def control_stale_after(entry) -> float:
     return min(configured, float(DEFAULT_STALE_AFTER_SECONDS))
 
 
-def control_lock_for(stored: dict[str, Any]) -> Lock:
-    """Return the config-entry lock shared by every fence-control entity."""
-    return stored.setdefault("control_lock", Lock())
+_CONTROL_LOCKS = "_control_locks"
+
+
+def control_lock_for(domain_data: dict[str, Any], entry_id: str) -> Lock:
+    """Return an entry lock whose lifetime spans setup reloads."""
+    locks = domain_data.setdefault(_CONTROL_LOCKS, {})
+    return locks.setdefault(entry_id, Lock())
+
+
+def remove_control_lock(domain_data: dict[str, Any], entry_id: str) -> None:
+    """Drop a lock only when its config entry is permanently removed."""
+    locks = domain_data.get(_CONTROL_LOCKS, {})
+    locks.pop(entry_id, None)
 
 
 def _validate_options(entry, *, enabled: bool) -> None:
