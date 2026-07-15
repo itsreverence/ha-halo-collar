@@ -24,10 +24,9 @@ def control_stale_after(entry) -> float:
     return min(configured, float(DEFAULT_STALE_AFTER_SECONDS))
 
 
-def control_lock_for(stored: dict[str, Any], collar_id: str) -> Lock:
-    """Return the shared per-entry, per-collar transaction lock."""
-    locks = stored.setdefault("control_locks", {})
-    return locks.setdefault(collar_id, Lock())
+def control_lock_for(stored: dict[str, Any]) -> Lock:
+    """Return the config-entry lock shared by every fence-control entity."""
+    return stored.setdefault("control_lock", Lock())
 
 
 def _validate_options(entry, *, enabled: bool) -> None:
@@ -63,7 +62,7 @@ async def async_set_fence_mode(
     async with control_lock:
         _validate_options(entry, enabled=enabled)
 
-        await coordinator.async_request_refresh()
+        await coordinator.async_refresh()
         if not coordinator.last_update_success:
             raise HaloControlError("Could not refresh Halo state before changing fence mode")
 
@@ -84,7 +83,7 @@ async def async_set_fence_mode(
         try:
             await client.async_set_fences_enabled(pet["id"], enabled=enabled)
         except HaloWriteOutcomeUnknown as err:
-            await coordinator.async_request_refresh()
+            await coordinator.async_refresh()
             if coordinator.last_update_success and _is_confirmed(state_getter, enabled=enabled):
                 return
             raise HaloControlError(
@@ -92,7 +91,7 @@ async def async_set_fence_mode(
                 "check the official Halo app"
             ) from err
 
-        await coordinator.async_request_refresh()
+        await coordinator.async_refresh()
         if not coordinator.last_update_success:
             raise HaloControlError(
                 "Halo command was sent but state confirmation failed; check the official Halo app"

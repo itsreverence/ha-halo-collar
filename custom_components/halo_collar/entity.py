@@ -36,7 +36,11 @@ class HaloEntity(CoordinatorEntity):
         collar = self.collar
         if collar is None:
             return None
-        return pet_for_collar(self.coordinator.data.pets, collar)
+        return pet_for_collar(
+            self.coordinator.data.pets,
+            collar,
+            self.coordinator.data.collars,
+        )
 
     @property
     def available(self) -> bool:

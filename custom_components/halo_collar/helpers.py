@@ -36,6 +36,7 @@ REDACT_KEYS = frozenset(
 )
 
 STALE_AFTER_SECONDS = 900
+MAX_FUTURE_TELEMETRY_SKEW_SECONDS = 300
 
 _STATUS_LABELS = {
     "notcharged": "Not charging",
@@ -86,10 +87,22 @@ def nested(collar: dict[str, Any], *keys: str) -> Any:
     return value
 
 
-def pet_for_collar(pets: list[dict[str, Any]], collar: dict[str, Any]) -> dict[str, Any] | None:
-    """Match Halo's pet payload to its collar, failing closed on conflicts."""
+def pet_for_collar(
+    pets: list[dict[str, Any]],
+    collar: dict[str, Any],
+    collars: list[dict[str, Any]] | None = None,
+) -> dict[str, Any] | None:
+    """Match one pet to one collar, failing closed on snapshot-wide conflicts."""
     pet_id = nested(collar, "petInfo", "id")
     collar_id = collar.get("id")
+
+    if collars is not None:
+        if not collar_id or sum(item.get("id") == collar_id for item in collars) != 1:
+            return None
+        if pet_id:
+            claimants = [item for item in collars if nested(item, "petInfo", "id") == pet_id]
+            if len(claimants) != 1 or claimants[0].get("id") != collar_id:
+                return None
 
     if pet_id:
         pet_matches = [pet for pet in pets if pet.get("id") == pet_id]
@@ -108,7 +121,16 @@ def pet_for_collar(pets: list[dict[str, Any]], collar: dict[str, Any]) -> dict[s
     if not collar_id:
         return None
     collar_matches = [pet for pet in pets if nested(pet, "collarInfo", "id") == collar_id]
-    return collar_matches[0] if len(collar_matches) == 1 else None
+    if len(collar_matches) != 1:
+        return None
+    pet_match = collar_matches[0]
+    if collars is not None and pet_match.get("id"):
+        claimants = [
+            item for item in collars if nested(item, "petInfo", "id") == pet_match.get("id")
+        ]
+        if claimants and (len(claimants) != 1 or claimants[0].get("id") != collar_id):
+            return None
+    return pet_match
 
 
 def pet_fences_enabled(pet: dict[str, Any] | None) -> bool | None:
@@ -150,7 +172,8 @@ def is_online(
     timestamp = last_telemetry(collar)
     if timestamp is None:
         return False
-    return ((now or datetime.now(UTC)) - timestamp).total_seconds() <= stale_after
+    age = ((now or datetime.now(UTC)) - timestamp).total_seconds()
+    return -MAX_FUTURE_TELEMETRY_SKEW_SECONDS <= age <= stale_after
 
 
 def fence_disable_block_reason(

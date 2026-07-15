@@ -66,6 +66,17 @@ def test_pet_mapping_fails_closed_on_duplicate_pet_ids():
     assert pet_for_collar(pets, collar) is None
 
 
+def test_pet_mapping_fails_closed_when_two_collars_claim_one_pet():
+    pets = [{"id": "pet-1", "telemetry": {"mode": {"fencesOn": True}}}]
+    collars = [
+        {"id": "collar-1", "petInfo": {"id": "pet-1"}},
+        {"id": "collar-2", "petInfo": {"id": "pet-1"}},
+    ]
+
+    assert pet_for_collar(pets, collars[0], collars) is None
+    assert pet_for_collar(pets, collars[1], collars) is None
+
+
 def test_active_walk_is_detected_from_either_payload():
     assert has_active_walk({"telemetry": {"walk": {"id": "walk-1"}}}, {}) is True
     assert has_active_walk({}, {"telemetry": {"walk": {"id": "walk-1"}}}) is True
@@ -144,6 +155,15 @@ def test_online_honors_custom_stale_after_threshold():
 
     assert is_online(collar, now=now) is False  # default 900s threshold
     assert is_online(collar, now=now, stale_after=3600) is True
+
+
+def test_online_allows_small_clock_skew_but_rejects_far_future_telemetry():
+    now = datetime(2026, 7, 6, 12, 0, tzinfo=UTC)
+    modest_future = {"telemetry": {"manifest": {"timestamp": "2026-07-06T12:04:00Z"}}}
+    far_future = {"telemetry": {"manifest": {"timestamp": "2026-07-07T12:00:00Z"}}}
+
+    assert is_online(modest_future, now=now) is True
+    assert is_online(far_future, now=now) is False
 
 
 def test_last_telemetry_parses_manifest_timestamp():

@@ -18,8 +18,10 @@ from custom_components.halo_collar.controls import (
 )
 
 
-def _collar(*, fresh: bool = True, walk=None):
-    timestamp = datetime.now(UTC).isoformat() if fresh else "2026-01-01T00:00:00+00:00"
+def _collar(*, fresh: bool = True, walk=None, timestamp=None):
+    timestamp = timestamp or (
+        datetime.now(UTC).isoformat() if fresh else "2026-01-01T00:00:00+00:00"
+    )
     return {
         "id": "collar-1",
         "petInfo": {"id": "pet-1"},
@@ -44,10 +46,13 @@ class FakeCoordinator:
         self.last_update_success = True
         self.refreshes = 0
 
-    async def async_request_refresh(self):
+    async def async_refresh(self):
         self.refreshes += 1
         self.index = min(self.index + 1, len(self.states) - 1)
         self.last_update_success = self.successes[self.index]
+
+    async def async_request_refresh(self):
+        raise AssertionError("control transactions must bypass the debouncer")
 
     @property
     def state(self):
@@ -102,11 +107,13 @@ async def _execute(coordinator, client, entry, *, enabled, control_lock=None):
     )
 
 
-def test_control_lock_is_shared_by_entities_for_the_same_collar():
+def test_control_lock_is_shared_by_all_entities_in_the_config_entry():
     stored = {}
 
-    assert control_lock_for(stored, "collar-1") is control_lock_for(stored, "collar-1")
-    assert control_lock_for(stored, "collar-1") is not control_lock_for(stored, "collar-2")
+    button_lock = control_lock_for(stored)
+    switch_lock = control_lock_for(stored)
+
+    assert button_lock is switch_lock
 
 
 @pytest.mark.asyncio
@@ -157,13 +164,13 @@ async def test_direct_disable_call_fails_closed_after_fresh_read(pet, collar, me
 async def test_option_revocation_during_preflight_blocks_pending_write():
     entry = _entry(allow_disable=True)
     coordinator = FakeCoordinator([(_pet(), _collar())])
-    original_refresh = coordinator.async_request_refresh
+    original_refresh = coordinator.async_refresh
 
     async def refresh_and_revoke():
         await original_refresh()
         entry.options[CONF_ALLOW_FENCE_DISABLE] = False
 
-    coordinator.async_request_refresh = refresh_and_revoke
+    coordinator.async_refresh = refresh_and_revoke
     client = FakeClient()
 
     with pytest.raises(HaloControlError, match="not allowed"):
@@ -191,6 +198,23 @@ async def test_enable_command_rejects_stale_state_before_write():
 
     with pytest.raises(HaloControlError, match="stale"):
         await _execute(coordinator, client, _entry(), enabled=True)
+
+    assert client.writes == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("enabled", [True, False])
+async def test_commands_reject_far_future_telemetry_before_write(enabled):
+    coordinator = FakeCoordinator([(_pet(), _collar(timestamp="2999-01-01T00:00:00+00:00"))])
+    client = FakeClient()
+
+    with pytest.raises(HaloControlError, match="stale"):
+        await _execute(
+            coordinator,
+            client,
+            _entry(allow_disable=True),
+            enabled=enabled,
+        )
 
     assert client.writes == []
 
