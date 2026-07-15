@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import time
 
 import aiohttp
 import pytest
 
+from custom_components.halo_collar import api as halo_api
 from custom_components.halo_collar.api import (
     HaloApiClient,
     HaloApiError,
@@ -282,6 +284,37 @@ async def test_write_status_body_failures_have_unknown_outcome_without_replay(st
 
     assert len(session.puts) == 1
     assert session.put_redirects == [False]
+    assert session.response.released is True
+
+
+class StalledBodyResponse(FakeResponse):
+    async def json(self, content_type=None):
+        await asyncio.sleep(60)
+
+
+class StalledBodyWriteSession(FakeSession):
+    def __init__(self):
+        super().__init__()
+        self.response = StalledBodyResponse(200, {})
+
+    async def put(self, url, json=None, headers=None, allow_redirects=True):
+        self.put_redirects.append(allow_redirects)
+        self.puts.append((url, json, headers))
+        return self.response
+
+
+@pytest.mark.asyncio
+async def test_write_timeout_covers_response_body_and_releases_response(monkeypatch):
+    monkeypatch.setattr(halo_api, "REQUEST_TIMEOUT_SECONDS", 0.01)
+    session = StalledBodyWriteSession()
+    client = _new_client(session)
+    client._access_token = "access"
+    client._expires_at = time.time() + 3600
+
+    with pytest.raises(HaloWriteOutcomeUnknown, match="response processing failed"):
+        await client.async_set_fences_enabled("pet-1", enabled=True)
+
+    assert len(session.puts) == 1
     assert session.response.released is True
 
 

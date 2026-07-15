@@ -115,30 +115,33 @@ class HaloApiClient:
 
     async def _async_put_json(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         await self._async_refresh_if_needed()
-        response = await self._async_put_once(path, payload)
+        response = None
         try:
-            if response.status == 401:
-                await response.text()
-                raise HaloWriteOutcomeUnknown(
-                    f"PUT {path} returned HTTP 401; write was not retried "
-                    "because outcome is unknown"
-                )
-            if not 200 <= response.status < 300:
-                text = await response.text()
-                raise HaloWriteOutcomeUnknown(
-                    f"PUT {path} returned HTTP {response.status}; outcome is unknown: {text[:200]}"
-                )
-            result = await response.json(content_type=None)
-            if not isinstance(result, dict):
-                raise HaloWriteOutcomeUnknown(
-                    f"PUT {path} returned an invalid success response; outcome is unknown"
-                )
-            return result
+            async with asyncio.timeout(REQUEST_TIMEOUT_SECONDS):
+                response = await self._async_put_once(path, payload)
+                if response.status == 401:
+                    await response.text()
+                    raise HaloWriteOutcomeUnknown(
+                        f"PUT {path} returned HTTP 401; write was not retried "
+                        "because outcome is unknown"
+                    )
+                if not 200 <= response.status < 300:
+                    text = await response.text()
+                    raise HaloWriteOutcomeUnknown(
+                        f"PUT {path} returned HTTP {response.status}; "
+                        f"outcome is unknown: {text[:200]}"
+                    )
+                result = await response.json(content_type=None)
+                if not isinstance(result, dict):
+                    raise HaloWriteOutcomeUnknown(
+                        f"PUT {path} returned an invalid success response; outcome is unknown"
+                    )
+                return result
         except HaloWriteOutcomeUnknown:
             raise
         except (TimeoutError, aiohttp.ClientError, ValueError) as err:
             raise HaloWriteOutcomeUnknown(
-                f"PUT {path} response processing failed; outcome is unknown"
+                f"PUT {path} dispatch or response processing failed; outcome is unknown"
             ) from err
         finally:
             release = getattr(response, "release", None)
@@ -147,14 +150,13 @@ class HaloApiClient:
 
     async def _async_put_once(self, path: str, payload: dict[str, Any]) -> Any:
         try:
-            async with asyncio.timeout(REQUEST_TIMEOUT_SECONDS):
-                return await self._session.put(
-                    f"{self._api_base}{path}",
-                    json=payload,
-                    headers=self._headers(),
-                    allow_redirects=False,
-                )
-        except (TimeoutError, aiohttp.ClientError) as err:
+            return await self._session.put(
+                f"{self._api_base}{path}",
+                json=payload,
+                headers=self._headers(),
+                allow_redirects=False,
+            )
+        except aiohttp.ClientError as err:
             raise HaloWriteOutcomeUnknown(
                 f"PUT {path} transport failed after dispatch; outcome is unknown: {err!r}"
             ) from err
