@@ -113,10 +113,10 @@ class HaloApiClient:
         await self._async_refresh_if_needed()
         response = await self._async_put_once(path, payload)
         if response.status == 401:
-            await self.async_refresh_token()
-            response = await self._async_put_once(path, payload)
-            if response.status == 401:
-                raise HaloAuthError(f"PUT {path} unauthorized even after a token refresh")
+            await response.text()
+            raise HaloApiError(
+                f"PUT {path} returned HTTP 401; write was not retried because outcome is unknown"
+            )
         if response.status >= 400:
             text = await response.text()
             raise HaloApiError(f"PUT {path} failed: HTTP {response.status}: {text[:200]}")

@@ -87,26 +87,33 @@ def nested(collar: dict[str, Any], *keys: str) -> Any:
 
 
 def pet_for_collar(pets: list[dict[str, Any]], collar: dict[str, Any]) -> dict[str, Any] | None:
-    """Match Halo's pet payload to its collar without relying on names."""
+    """Match Halo's pet payload to its collar, failing closed on conflicts."""
     pet_id = nested(collar, "petInfo", "id")
     collar_id = collar.get("id")
-    for pet in pets:
-        if pet_id and pet.get("id") == pet_id:
-            return pet
-        if collar_id and nested(pet, "collarInfo", "id") == collar_id:
-            return pet
-    return None
+
+    if pet_id:
+        pet_match = next((pet for pet in pets if pet.get("id") == pet_id), None)
+        if pet_match is None:
+            return None
+        linked_collar_id = nested(pet_match, "collarInfo", "id")
+        if linked_collar_id and collar_id and linked_collar_id != collar_id:
+            return None
+        conflicting = any(
+            pet.get("id") != pet_id and collar_id and nested(pet, "collarInfo", "id") == collar_id
+            for pet in pets
+        )
+        return None if conflicting else pet_match
+
+    if not collar_id:
+        return None
+    collar_matches = [pet for pet in pets if nested(pet, "collarInfo", "id") == collar_id]
+    return collar_matches[0] if len(collar_matches) == 1 else None
 
 
 def pet_fences_enabled(pet: dict[str, Any] | None) -> bool | None:
-    """Return reported fence mode, falling back to desired state if needed."""
-    if pet is None:
-        return None
-    reported = nested(pet, "telemetry", "mode", "fencesOn")
-    if isinstance(reported, bool):
-        return reported
-    desired = nested(pet, "desiredMode", "fencesOn")
-    return desired if isinstance(desired, bool) else None
+    """Return only the collar-reported fence mode, never desired state."""
+    reported = nested(pet or {}, "telemetry", "mode", "fencesOn")
+    return reported if isinstance(reported, bool) else None
 
 
 def pet_safety_status(pet: dict[str, Any] | None) -> Any:
@@ -143,6 +150,26 @@ def is_online(
     if timestamp is None:
         return False
     return ((now or datetime.now(UTC)) - timestamp).total_seconds() <= stale_after
+
+
+def fence_disable_block_reason(
+    pet: dict[str, Any] | None,
+    collar: dict[str, Any] | None,
+    *,
+    stale_after: float,
+) -> str | None:
+    """Fail-closed preflight for the containment-disabling command."""
+    if pet is None or collar is None:
+        return "Halo pet/collar mapping is unavailable"
+    if not is_online(collar, stale_after=stale_after):
+        return "Halo collar telemetry is stale"
+    if pet.get("isFencesSynchronized") is not True:
+        return "Halo has not confirmed synchronized fence state"
+    if pet_fences_enabled(pet) is None:
+        return "Halo has not reported current fence mode"
+    if has_active_walk(pet, collar):
+        return "Halo fences cannot be disabled during an active walk"
+    return None
 
 
 def indoors_on_wifi(collar: dict[str, Any]) -> bool:

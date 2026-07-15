@@ -6,7 +6,7 @@ Build a public-quality Home Assistant custom integration for Halo Collar cloud t
 
 ## Guardrails
 
-- Keep the default installation telemetry-only. Any write/control feature must be separately reviewed, explicitly opt-in, unavailable on stale telemetry, avoid blind retries, refresh state after the command, and ship with contract tests.
+- Keep the default installation telemetry-only. Any write/control feature must be separately reviewed, explicitly opt-in, revalidate current options and fresh authoritative state in the action path, issue at most one request with no replay after an ambiguous result, require post-command reported-state confirmation, and ship with transaction-level tests.
 - The only currently approved write surface is fence mode: fail-safe enable is the first tier, while disabling containment requires a separate stronger opt-in and must be blocked during active walks.
 - Do not implement corrections, fence creation/editing/deletion, bind/unbind, account writes, or proprietary BLE walk-start behavior without another explicit review.
 - Keep the integration generic and publishable; do not bake in specific accounts, entity IDs, dog names, token values, serials, or locations.

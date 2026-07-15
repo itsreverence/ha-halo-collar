@@ -219,6 +219,26 @@ async def test_set_fences_enabled_uses_recovered_instant_mode_contract():
     assert response["desiredMode"]["fencesOn"] is True
 
 
+class UnauthorizedWriteSession(FakeSession):
+    async def put(self, url, json=None, headers=None):
+        self.puts.append((url, json, headers))
+        return FakeResponse(401, {"error": "unauthorized"})
+
+
+@pytest.mark.asyncio
+async def test_fence_writes_are_not_retried_or_refreshed_after_401():
+    session = UnauthorizedWriteSession()
+    client = _new_client(session)
+    client._access_token = "access"
+    client._expires_at = time.time() + 3600
+
+    with pytest.raises(HaloApiError, match="not retried"):
+        await client.async_set_fences_enabled("pet-1", enabled=False)
+
+    assert len(session.puts) == 1
+    assert session.posts == []
+
+
 class FailedWriteSession(FakeSession):
     async def put(self, url, json=None, headers=None):
         self.puts.append((url, json, headers))

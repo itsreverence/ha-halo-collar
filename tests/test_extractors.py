@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 
 from custom_components.halo_collar.helpers import (
     REDACTED,
+    fence_disable_block_reason,
     has_active_walk,
     indoors_on_wifi,
     is_online,
@@ -41,13 +42,58 @@ def test_pet_mapping_and_control_state_use_live_payload_relationships():
 def test_pet_mapping_and_control_state_fail_closed_when_unknown():
     assert pet_for_collar([], {"id": "collar-1"}) is None
     assert pet_fences_enabled(None) is None
+    assert pet_fences_enabled({"desiredMode": {"fencesOn": True}}) is None
     assert pet_safety_status(None) is None
+
+
+def test_pet_mapping_fails_closed_on_conflicting_relationships():
+    pets = [
+        {"id": "wrong-pet", "collarInfo": {"id": "collar-1"}},
+        {"id": "pet-1", "collarInfo": {"id": "collar-1"}},
+    ]
+    collar = {"id": "collar-1", "petInfo": {"id": "pet-1"}}
+
+    assert pet_for_collar(pets, collar) is None
 
 
 def test_active_walk_is_detected_from_either_payload():
     assert has_active_walk({"telemetry": {"walk": {"id": "walk-1"}}}, {}) is True
     assert has_active_walk({}, {"telemetry": {"walk": {"id": "walk-1"}}}) is True
     assert has_active_walk({"telemetry": {"walk": None}}, {}) is False
+
+
+def test_fence_disable_preflight_requires_fresh_synchronized_reported_state():
+    collar = {"telemetry": {"manifest": {"timestamp": datetime.now(UTC).isoformat()}, "walk": None}}
+    pet = {
+        "isFencesSynchronized": True,
+        "telemetry": {"mode": {"fencesOn": True}, "walk": None},
+    }
+
+    assert fence_disable_block_reason(pet, collar, stale_after=900) is None
+    assert (
+        fence_disable_block_reason({**pet, "isFencesSynchronized": False}, collar, stale_after=900)
+        == "Halo has not confirmed synchronized fence state"
+    )
+    assert (
+        fence_disable_block_reason({**pet, "telemetry": {"walk": None}}, collar, stale_after=900)
+        == "Halo has not reported current fence mode"
+    )
+    assert (
+        fence_disable_block_reason(
+            {
+                **pet,
+                "telemetry": {"mode": {"fencesOn": True}, "walk": {"id": "walk-1"}},
+            },
+            collar,
+            stale_after=900,
+        )
+        == "Halo fences cannot be disabled during an active walk"
+    )
+    stale_collar = {"telemetry": {"manifest": {"timestamp": "2026-01-01T00:00:00+00:00"}}}
+    assert (
+        fence_disable_block_reason(pet, stale_collar, stale_after=900)
+        == "Halo collar telemetry is stale"
+    )
 
 
 def test_sensor_extractors_cover_live_payload_shape():

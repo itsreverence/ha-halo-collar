@@ -4,12 +4,8 @@ from homeassistant.components.button import ButtonEntity
 from homeassistant.exceptions import HomeAssistantError
 
 from .api import HaloApiError
-from .const import (
-    CONF_ENABLE_FENCE_CONTROLS,
-    CONF_STALE_AFTER,
-    DEFAULT_STALE_AFTER_SECONDS,
-    DOMAIN,
-)
+from .const import CONF_ENABLE_FENCE_CONTROLS, DOMAIN
+from .controls import HaloControlError, async_set_fence_mode, control_stale_after
 from .entity import HaloEntity
 from .helpers import is_online
 
@@ -40,7 +36,7 @@ class HaloEnableFencesButton(HaloEntity, ButtonEntity):
     def available(self) -> bool:
         collar = self.collar
         pet = self.pet
-        stale_after = self._entry.options.get(CONF_STALE_AFTER, DEFAULT_STALE_AFTER_SECONDS)
+        stale_after = control_stale_after(self._entry)
         return (
             collar is not None
             and pet is not None
@@ -48,11 +44,13 @@ class HaloEnableFencesButton(HaloEntity, ButtonEntity):
         )
 
     async def async_press(self) -> None:
-        pet = self.pet
-        if pet is None or not pet.get("id"):
-            raise HomeAssistantError("Halo pet/collar mapping is unavailable")
         try:
-            await self._client.async_set_fences_enabled(pet["id"], enabled=True)
-            await self.coordinator.async_request_refresh()
-        except HaloApiError as err:
+            await async_set_fence_mode(
+                coordinator=self.coordinator,
+                client=self._client,
+                entry=self._entry,
+                state_getter=lambda: (self.pet, self.collar),
+                enabled=True,
+            )
+        except (HaloApiError, HaloControlError) as err:
             raise HomeAssistantError(f"Could not enable Halo fences: {err}") from err
