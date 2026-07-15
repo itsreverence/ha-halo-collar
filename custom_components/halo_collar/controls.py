@@ -51,10 +51,14 @@ def _is_confirmed(
 
 
 async def _async_dispatch_and_reconcile(
-    *, coordinator, client, pet_id: str, state_getter, enabled: bool
+    *, coordinator, client, pet_id: str, state_getter, enabled: bool, pre_dispatch
 ) -> None:
     try:
-        await client.async_set_fences_enabled(pet_id, enabled=enabled)
+        await client.async_set_fences_enabled(
+            pet_id,
+            enabled=enabled,
+            pre_dispatch=pre_dispatch,
+        )
     except HaloWriteOutcomeUnknown as err:
         await coordinator.async_refresh()
         if coordinator.last_update_success and _is_confirmed(state_getter, enabled=enabled):
@@ -138,5 +142,6 @@ async def async_set_fence_mode(
                 pet_id=pet["id"],
                 state_getter=state_getter,
                 enabled=enabled,
+                pre_dispatch=lambda: _validate_options(entry, enabled=enabled),
             )
         )

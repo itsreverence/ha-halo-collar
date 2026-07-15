@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
@@ -101,7 +102,13 @@ class HaloApiClient:
             raise HaloApiError(f"GET {path} failed: HTTP {response.status}: {text[:200]}")
         return await response.json(content_type=None)
 
-    async def async_set_fences_enabled(self, pet_id: str, *, enabled: bool) -> dict[str, Any]:
+    async def async_set_fences_enabled(
+        self,
+        pet_id: str,
+        *,
+        enabled: bool,
+        pre_dispatch: Callable[[], None] | None = None,
+    ) -> dict[str, Any]:
         """Set the pet's fence mode through Halo's instant-mode endpoint.
 
         Writes are deliberately not retried on 429/5xx or connection errors:
@@ -111,14 +118,20 @@ class HaloApiClient:
             raise HaloApiError("Pet ID is required to change fence mode")
         payload = {"modePatch": {"fencesOn": enabled}}
         path = f"/pet/{quote(pet_id, safe='')}/instant-mode"
-        return await self._async_put_json(path, payload)
+        return await self._async_put_json(path, payload, pre_dispatch=pre_dispatch)
 
-    async def _async_put_json(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+    async def _async_put_json(
+        self,
+        path: str,
+        payload: dict[str, Any],
+        *,
+        pre_dispatch: Callable[[], None] | None = None,
+    ) -> dict[str, Any]:
         await self._async_refresh_if_needed()
         response = None
         try:
             async with asyncio.timeout(REQUEST_TIMEOUT_SECONDS):
-                response = await self._async_put_once(path, payload)
+                response = await self._async_put_once(path, payload, pre_dispatch=pre_dispatch)
                 if response.status == 401:
                     await response.text()
                     raise HaloWriteOutcomeUnknown(
@@ -148,8 +161,16 @@ class HaloApiClient:
             if callable(release):
                 release()
 
-    async def _async_put_once(self, path: str, payload: dict[str, Any]) -> Any:
+    async def _async_put_once(
+        self,
+        path: str,
+        payload: dict[str, Any],
+        *,
+        pre_dispatch: Callable[[], None] | None = None,
+    ) -> Any:
         try:
+            if pre_dispatch is not None:
+                pre_dispatch()
             return await self._session.put(
                 f"{self._api_base}{path}",
                 json=payload,

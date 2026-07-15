@@ -63,13 +63,30 @@ class FakeClient:
     def __init__(self):
         self.writes = []
 
-    async def async_set_fences_enabled(self, pet_id, *, enabled):
+    async def async_set_fences_enabled(self, pet_id, *, enabled, pre_dispatch=None):
+        if pre_dispatch is not None:
+            pre_dispatch()
+        self.writes.append((pet_id, enabled))
+        return {"ok": True}
+
+
+class RevokingAtDispatchClient(FakeClient):
+    def __init__(self, entry):
+        super().__init__()
+        self.entry = entry
+
+    async def async_set_fences_enabled(self, pet_id, *, enabled, pre_dispatch=None):
+        self.entry.options[CONF_ALLOW_FENCE_DISABLE] = False
+        if pre_dispatch is not None:
+            pre_dispatch()
         self.writes.append((pet_id, enabled))
         return {"ok": True}
 
 
 class UnknownOutcomeClient(FakeClient):
-    async def async_set_fences_enabled(self, pet_id, *, enabled):
+    async def async_set_fences_enabled(self, pet_id, *, enabled, pre_dispatch=None):
+        if pre_dispatch is not None:
+            pre_dispatch()
         self.writes.append((pet_id, enabled))
         raise HaloWriteOutcomeUnknown("simulated dispatched write failure")
 
@@ -80,7 +97,9 @@ class BlockingClient(FakeClient):
         self.started = asyncio.Event()
         self.release = asyncio.Event()
 
-    async def async_set_fences_enabled(self, pet_id, *, enabled):
+    async def async_set_fences_enabled(self, pet_id, *, enabled, pre_dispatch=None):
+        if pre_dispatch is not None:
+            pre_dispatch()
         self.writes.append((pet_id, enabled))
         self.started.set()
         await self.release.wait()
@@ -172,6 +191,19 @@ async def test_option_revocation_during_preflight_blocks_pending_write():
 
     coordinator.async_refresh = refresh_and_revoke
     client = FakeClient()
+
+    with pytest.raises(HaloControlError, match="not allowed"):
+        await _execute(coordinator, client, entry, enabled=False)
+
+    assert coordinator.refreshes == 1
+    assert client.writes == []
+
+
+@pytest.mark.asyncio
+async def test_option_revocation_at_actual_dispatch_boundary_blocks_put():
+    entry = _entry(allow_disable=True)
+    coordinator = FakeCoordinator([(_pet(), _collar())])
+    client = RevokingAtDispatchClient(entry)
 
     with pytest.raises(HaloControlError, match="not allowed"):
         await _execute(coordinator, client, entry, enabled=False)

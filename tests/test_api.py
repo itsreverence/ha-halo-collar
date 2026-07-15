@@ -234,6 +234,27 @@ async def test_set_fences_enabled_uses_recovered_instant_mode_contract():
     assert response["desiredMode"]["fencesOn"] is True
 
 
+@pytest.mark.asyncio
+async def test_pre_dispatch_check_runs_after_token_refresh_and_can_veto_put():
+    session = FakeSession()
+    client = _new_client(session)
+    client._refresh_token = "refresh"
+
+    def veto_after_refresh():
+        assert session.posts[0][1]["grant_type"] == "refresh_token"
+        assert client.token_snapshot["access_token"] == "new-access"
+        raise RuntimeError("options revoked")
+
+    with pytest.raises(RuntimeError, match="options revoked"):
+        await client.async_set_fences_enabled(
+            "pet-1",
+            enabled=False,
+            pre_dispatch=veto_after_refresh,
+        )
+
+    assert session.puts == []
+
+
 class RedirectWriteSession(FakeSession):
     async def put(self, url, json=None, headers=None, allow_redirects=True):
         self.put_redirects.append(allow_redirects)
