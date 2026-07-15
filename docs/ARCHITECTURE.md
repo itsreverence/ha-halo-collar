@@ -17,8 +17,8 @@ Home Assistant config entry (email + stored tokens; password is never persisted)
      -> persists refreshed tokens back to the config entry
      -> raises ConfigEntryAuthFailed to trigger reauth when credentials fail
   -> platforms expose telemetry entities plus disabled-by-default controls
-     -> one PUT /pet/{id}/instant-mode with {modePatch: {fencesOn: bool}}
-     -> no write replay after an ambiguous HTTP/network result, including 401
+     -> serialized per collar; one PUT /pet/{id}/instant-mode with {modePatch: {fencesOn: bool}}
+     -> redirects disabled; no write replay after an ambiguous HTTP/network result, including 401
      -> fresh preflight plus immediate coordinator refresh and reported-state confirmation
 ```
 
@@ -42,7 +42,7 @@ The repository must not contain real user access/refresh tokens, account credent
 
 ## Safety boundary
 
-The default installation is telemetry-only. The reviewed fence-mode endpoint is available only through two explicit option tiers: enable-only, then full on/off. Entity service actions refresh and revalidate the current options, relationship mapping, and telemetry rather than trusting UI availability or cached state. A write is issued at most once, is never replayed after an ambiguous HTTP/network outcome (including 401), and must be followed by synchronized reported-state confirmation. Fence-off additionally requires synchronized reported mode and no active walk; rejected or unconfirmed transitions surface an error.
+The default installation is telemetry-only. The reviewed fence-mode endpoint is available only through two explicit option tiers: enable-only, then full on/off. Entity service actions are serialized per collar and refresh and revalidate the current options, relationship mapping, and telemetry rather than trusting UI availability or cached state. A write is issued at most once with automatic redirects disabled, is never replayed after an ambiguous HTTP/network outcome (including 401), and must be followed by synchronized reported-state confirmation. Fence-off additionally requires synchronized reported mode and no active walk; rejected or unconfirmed transitions surface an error.
 
 Do not add corrections, fence geometry writes, collar wake/control, bind/unbind, account mutation, or proprietary BLE walk-start behavior without a separate explicit review. Cloud pause/stop for an already active walk may be investigated later, but must account for the official app's local walk database and post-processing lifecycle.
 

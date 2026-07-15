@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
@@ -9,7 +10,11 @@ from custom_components.halo_collar.const import (
     CONF_ALLOW_FENCE_DISABLE,
     CONF_ENABLE_FENCE_CONTROLS,
 )
-from custom_components.halo_collar.controls import HaloControlError, async_set_fence_mode
+from custom_components.halo_collar.controls import (
+    HaloControlError,
+    async_set_fence_mode,
+    control_lock_for,
+)
 
 
 def _collar(*, fresh: bool = True, walk=None):
@@ -57,6 +62,19 @@ class FakeClient:
         return {"ok": True}
 
 
+class BlockingClient(FakeClient):
+    def __init__(self):
+        super().__init__()
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def async_set_fences_enabled(self, pet_id, *, enabled):
+        self.writes.append((pet_id, enabled))
+        self.started.set()
+        await self.release.wait()
+        return {"ok": True}
+
+
 def _entry(*, enable=True, allow_disable=False):
     return SimpleNamespace(
         options={
@@ -66,14 +84,22 @@ def _entry(*, enable=True, allow_disable=False):
     )
 
 
-async def _execute(coordinator, client, entry, *, enabled):
+async def _execute(coordinator, client, entry, *, enabled, control_lock=None):
     await async_set_fence_mode(
         coordinator=coordinator,
         client=client,
         entry=entry,
+        control_lock=control_lock or asyncio.Lock(),
         state_getter=lambda: coordinator.state,
         enabled=enabled,
     )
+
+
+def test_control_lock_is_shared_by_entities_for_the_same_collar():
+    stored = {}
+
+    assert control_lock_for(stored, "collar-1") is control_lock_for(stored, "collar-1")
+    assert control_lock_for(stored, "collar-1") is not control_lock_for(stored, "collar-2")
 
 
 @pytest.mark.asyncio
@@ -115,6 +141,26 @@ async def test_direct_disable_call_fails_closed_after_fresh_read(pet, collar, me
 
     with pytest.raises(HaloControlError, match=message):
         await _execute(coordinator, client, _entry(allow_disable=True), enabled=False)
+
+    assert coordinator.refreshes == 1
+    assert client.writes == []
+
+
+@pytest.mark.asyncio
+async def test_option_revocation_during_preflight_blocks_pending_write():
+    entry = _entry(allow_disable=True)
+    coordinator = FakeCoordinator([(_pet(), _collar())])
+    original_refresh = coordinator.async_request_refresh
+
+    async def refresh_and_revoke():
+        await original_refresh()
+        entry.options[CONF_ALLOW_FENCE_DISABLE] = False
+
+    coordinator.async_request_refresh = refresh_and_revoke
+    client = FakeClient()
+
+    with pytest.raises(HaloControlError, match="not allowed"):
+        await _execute(coordinator, client, entry, enabled=False)
 
     assert coordinator.refreshes == 1
     assert client.writes == []
@@ -182,3 +228,47 @@ async def test_unconfirmed_result_reports_ambiguous_outcome_without_second_write
 
     assert coordinator.refreshes == 2
     assert client.writes == [("pet-1", False)]
+
+
+@pytest.mark.asyncio
+async def test_contradictory_transactions_share_one_collar_lock():
+    coordinator = FakeCoordinator(
+        [(_pet(fences_on=False), _collar()), (_pet(fences_on=True), _collar())]
+    )
+    client = BlockingClient()
+    entry = _entry(allow_disable=True)
+    control_lock = asyncio.Lock()
+
+    enable_task = asyncio.create_task(
+        _execute(
+            coordinator,
+            client,
+            entry,
+            enabled=True,
+            control_lock=control_lock,
+        )
+    )
+    await client.started.wait()
+
+    disable_task = asyncio.create_task(
+        _execute(
+            coordinator,
+            client,
+            entry,
+            enabled=False,
+            control_lock=control_lock,
+        )
+    )
+    await asyncio.sleep(0)
+
+    assert coordinator.refreshes == 1
+    assert client.writes == [("pet-1", True)]
+
+    disable_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await disable_task
+    client.release.set()
+    await enable_task
+
+    assert coordinator.refreshes == 2
+    assert client.writes == [("pet-1", True)]

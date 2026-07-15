@@ -117,7 +117,7 @@ class HaloApiClient:
             raise HaloApiError(
                 f"PUT {path} returned HTTP 401; write was not retried because outcome is unknown"
             )
-        if response.status >= 400:
+        if not 200 <= response.status < 300:
             text = await response.text()
             raise HaloApiError(f"PUT {path} failed: HTTP {response.status}: {text[:200]}")
         result = await response.json(content_type=None)
@@ -132,6 +132,7 @@ class HaloApiClient:
                     f"{self._api_base}{path}",
                     json=payload,
                     headers=self._headers(),
+                    allow_redirects=False,
                 )
         except (TimeoutError, aiohttp.ClientError) as err:
             raise HaloApiError(f"PUT {path} failed: {err!r}") from err

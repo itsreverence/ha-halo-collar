@@ -5,7 +5,12 @@ from homeassistant.exceptions import HomeAssistantError
 
 from .api import HaloApiError
 from .const import CONF_ALLOW_FENCE_DISABLE, CONF_ENABLE_FENCE_CONTROLS, DOMAIN
-from .controls import HaloControlError, async_set_fence_mode, control_stale_after
+from .controls import (
+    HaloControlError,
+    async_set_fence_mode,
+    control_lock_for,
+    control_stale_after,
+)
 from .entity import HaloEntity
 from .helpers import is_online, pet_fences_enabled
 
@@ -18,7 +23,13 @@ async def async_setup_entry(hass, entry, async_add_entities):
     stored = hass.data[DOMAIN][entry.entry_id]
     coordinator = stored["coordinator"]
     async_add_entities(
-        HaloFenceModeSwitch(coordinator, entry, stored["client"], collar)
+        HaloFenceModeSwitch(
+            coordinator,
+            entry,
+            stored["client"],
+            collar,
+            control_lock_for(stored, str(collar.get("id"))),
+        )
         for collar in coordinator.data.collars
     )
 
@@ -29,9 +40,10 @@ class HaloFenceModeSwitch(HaloEntity, SwitchEntity):
     _attr_translation_key = "fence_mode"
     _attr_icon = "mdi:fence"
 
-    def __init__(self, coordinator, entry, client, collar) -> None:
+    def __init__(self, coordinator, entry, client, collar, control_lock) -> None:
         super().__init__(coordinator, entry, collar)
         self._client = client
+        self._control_lock = control_lock
         self._attr_unique_id = f"{self._collar_id}_fence_mode"
 
     @property
@@ -62,6 +74,7 @@ class HaloFenceModeSwitch(HaloEntity, SwitchEntity):
                 coordinator=self.coordinator,
                 client=self._client,
                 entry=self._entry,
+                control_lock=self._control_lock,
                 state_getter=lambda: (self.pet, self.collar),
                 enabled=enabled,
             )

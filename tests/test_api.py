@@ -24,6 +24,7 @@ class FakeSession:
         self.posts = []
         self.gets = []
         self.puts = []
+        self.put_redirects = []
         self._token_status = token_status
 
     async def post(self, url, data=None, headers=None):
@@ -51,8 +52,9 @@ class FakeSession:
             return FakeResponse(200, "2026-07-06T00:32:03Z")
         return FakeResponse(404, {})
 
-    async def put(self, url, json=None, headers=None):
+    async def put(self, url, json=None, headers=None, allow_redirects=True):
         assert json is not None
+        self.put_redirects.append(allow_redirects)
         self.puts.append((url, json, headers))
         enabled = json["modePatch"]["fencesOn"]
         return FakeResponse(
@@ -216,11 +218,33 @@ async def test_set_fences_enabled_uses_recovered_instant_mode_contract():
     assert url == "https://api.example/pet/pet-1/instant-mode"
     assert payload == {"modePatch": {"fencesOn": True}}
     assert headers["Authorization"] == "Bearer access"
+    assert session.put_redirects == [False]
     assert response["desiredMode"]["fencesOn"] is True
 
 
+class RedirectWriteSession(FakeSession):
+    async def put(self, url, json=None, headers=None, allow_redirects=True):
+        self.put_redirects.append(allow_redirects)
+        self.puts.append((url, json, headers))
+        return FakeResponse(307, {"location": "https://other.example"})
+
+
+@pytest.mark.asyncio
+async def test_fence_writes_do_not_follow_redirects_or_replay():
+    session = RedirectWriteSession()
+    client = _new_client(session)
+    client._access_token = "access"
+    client._expires_at = time.time() + 3600
+
+    with pytest.raises(HaloApiError, match="HTTP 307"):
+        await client.async_set_fences_enabled("pet-1", enabled=False)
+
+    assert len(session.puts) == 1
+    assert session.put_redirects == [False]
+
+
 class UnauthorizedWriteSession(FakeSession):
-    async def put(self, url, json=None, headers=None):
+    async def put(self, url, json=None, headers=None, allow_redirects=True):
         self.puts.append((url, json, headers))
         return FakeResponse(401, {"error": "unauthorized"})
 
@@ -240,7 +264,7 @@ async def test_fence_writes_are_not_retried_or_refreshed_after_401():
 
 
 class FailedWriteSession(FakeSession):
-    async def put(self, url, json=None, headers=None):
+    async def put(self, url, json=None, headers=None, allow_redirects=True):
         self.puts.append((url, json, headers))
         return FakeResponse(503, {"error": "unavailable"})
 

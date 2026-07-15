@@ -76,7 +76,7 @@ Open the integration in **Settings → Devices & Services** and click **Configur
 - **Enable fail-safe fence controls** (off by default) — adds an **Enable fences** button. This can restore fence enforcement but cannot turn it off.
 - **Allow fences to be disabled** (off by default) — adds the full **Fence mode** switch. This is a separate high-risk opt-in because Home Assistant automations can then disable containment.
 
-Changing either control option reloads the integration so the corresponding entities are added or removed. Entity actions refresh and revalidate options, mapping, and telemetry immediately before issuing one write; UI availability alone is never trusted. A write is never replayed after an ambiguous HTTP/network result, including 401. The integration then refreshes again and requires synchronized reported confirmation. Fence-off additionally requires synchronized reported fence state and no active walk.
+Changing either control option reloads the integration so the corresponding entities are added or removed. Commands for each collar are serialized, and entity actions refresh and revalidate options, mapping, and telemetry immediately before issuing one write; UI availability alone is never trusted. Automatic redirects are disabled and a write is never replayed after an ambiguous HTTP/network result, including 401. The integration then refreshes again and requires synchronized reported confirmation. Fence-off additionally requires synchronized reported fence state and no active walk.
 
 ## Disclaimer & safety
 
