@@ -4,6 +4,7 @@ from asyncio import Lock
 from collections.abc import Callable
 from typing import Any
 
+from .api import HaloWriteOutcomeUnknown
 from .const import (
     CONF_ALLOW_FENCE_DISABLE,
     CONF_ENABLE_FENCE_CONTROLS,
@@ -34,6 +35,19 @@ def _validate_options(entry, *, enabled: bool) -> None:
         raise HaloControlError("Halo fence controls are disabled in integration options")
     if not enabled and not entry.options.get(CONF_ALLOW_FENCE_DISABLE, False):
         raise HaloControlError("Disabling Halo fences is not allowed in integration options")
+
+
+def _is_confirmed(
+    state_getter: Callable[[], tuple[dict[str, Any] | None, dict[str, Any] | None]],
+    *,
+    enabled: bool,
+) -> bool:
+    pet, _collar = state_getter()
+    return (
+        pet is not None
+        and pet.get("isFencesSynchronized") is True
+        and pet_fences_enabled(pet) is enabled
+    )
 
 
 async def async_set_fence_mode(
@@ -67,19 +81,23 @@ async def async_set_fence_mode(
         # Options can change while the preflight refresh is in flight. Recheck
         # immediately before the one and only network write.
         _validate_options(entry, enabled=enabled)
-        await client.async_set_fences_enabled(pet["id"], enabled=enabled)
+        try:
+            await client.async_set_fences_enabled(pet["id"], enabled=enabled)
+        except HaloWriteOutcomeUnknown as err:
+            await coordinator.async_request_refresh()
+            if coordinator.last_update_success and _is_confirmed(state_getter, enabled=enabled):
+                return
+            raise HaloControlError(
+                "Halo write outcome is unknown and could not be reconciled; "
+                "check the official Halo app"
+            ) from err
 
         await coordinator.async_request_refresh()
         if not coordinator.last_update_success:
             raise HaloControlError(
                 "Halo command was sent but state confirmation failed; check the official Halo app"
             )
-        confirmed_pet, _confirmed_collar = state_getter()
-        if (
-            confirmed_pet is None
-            or confirmed_pet.get("isFencesSynchronized") is not True
-            or pet_fences_enabled(confirmed_pet) is not enabled
-        ):
+        if not _is_confirmed(state_getter, enabled=enabled):
             raise HaloControlError(
                 "Halo command was sent but the collar did not confirm the requested fence state"
             )

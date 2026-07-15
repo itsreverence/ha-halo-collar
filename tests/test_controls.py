@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from custom_components.halo_collar.api import HaloWriteOutcomeUnknown
 from custom_components.halo_collar.const import (
     CONF_ALLOW_FENCE_DISABLE,
     CONF_ENABLE_FENCE_CONTROLS,
@@ -60,6 +61,12 @@ class FakeClient:
     async def async_set_fences_enabled(self, pet_id, *, enabled):
         self.writes.append((pet_id, enabled))
         return {"ok": True}
+
+
+class UnknownOutcomeClient(FakeClient):
+    async def async_set_fences_enabled(self, pet_id, *, enabled):
+        self.writes.append((pet_id, enabled))
+        raise HaloWriteOutcomeUnknown("simulated dispatched write failure")
 
 
 class BlockingClient(FakeClient):
@@ -199,6 +206,33 @@ async def test_enable_command_refreshes_writes_once_and_confirms_reported_state(
 
     assert coordinator.refreshes == 2
     assert client.writes == [("pet-1", True)]
+
+
+@pytest.mark.asyncio
+async def test_unknown_write_outcome_reconciles_to_confirmed_state_without_retry():
+    coordinator = FakeCoordinator(
+        [(_pet(fences_on=False), _collar()), (_pet(fences_on=True), _collar())]
+    )
+    client = UnknownOutcomeClient()
+
+    await _execute(coordinator, client, _entry(), enabled=True)
+
+    assert coordinator.refreshes == 2
+    assert client.writes == [("pet-1", True)]
+
+
+@pytest.mark.asyncio
+async def test_unknown_write_outcome_refreshes_then_reports_ambiguous_state():
+    coordinator = FakeCoordinator(
+        [(_pet(fences_on=True), _collar()), (_pet(fences_on=True), _collar())]
+    )
+    client = UnknownOutcomeClient()
+
+    with pytest.raises(HaloControlError, match="outcome is unknown"):
+        await _execute(coordinator, client, _entry(allow_disable=True), enabled=False)
+
+    assert coordinator.refreshes == 2
+    assert client.writes == [("pet-1", False)]
 
 
 @pytest.mark.asyncio

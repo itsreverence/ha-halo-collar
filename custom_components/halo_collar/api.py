@@ -30,6 +30,10 @@ class HaloAuthError(HaloApiError):
     """Raised when Halo authentication (login or token refresh) fails."""
 
 
+class HaloWriteOutcomeUnknown(HaloApiError):
+    """Raised when a dispatched write may have reached Halo but was not confirmed."""
+
+
 @dataclass(slots=True)
 class HaloState:
     pets: list[dict[str, Any]]
@@ -114,15 +118,24 @@ class HaloApiClient:
         response = await self._async_put_once(path, payload)
         if response.status == 401:
             await response.text()
-            raise HaloApiError(
+            raise HaloWriteOutcomeUnknown(
                 f"PUT {path} returned HTTP 401; write was not retried because outcome is unknown"
             )
         if not 200 <= response.status < 300:
             text = await response.text()
-            raise HaloApiError(f"PUT {path} failed: HTTP {response.status}: {text[:200]}")
-        result = await response.json(content_type=None)
+            raise HaloWriteOutcomeUnknown(
+                f"PUT {path} returned HTTP {response.status}; outcome is unknown: {text[:200]}"
+            )
+        try:
+            result = await response.json(content_type=None)
+        except (aiohttp.ClientError, ValueError) as err:
+            raise HaloWriteOutcomeUnknown(
+                f"PUT {path} returned an unreadable success response; outcome is unknown"
+            ) from err
         if not isinstance(result, dict):
-            raise HaloApiError(f"PUT {path} returned an invalid response")
+            raise HaloWriteOutcomeUnknown(
+                f"PUT {path} returned an invalid success response; outcome is unknown"
+            )
         return result
 
     async def _async_put_once(self, path: str, payload: dict[str, Any]) -> Any:
@@ -135,7 +148,9 @@ class HaloApiClient:
                     allow_redirects=False,
                 )
         except (TimeoutError, aiohttp.ClientError) as err:
-            raise HaloApiError(f"PUT {path} failed: {err!r}") from err
+            raise HaloWriteOutcomeUnknown(
+                f"PUT {path} transport failed after dispatch; outcome is unknown: {err!r}"
+            ) from err
 
     async def _async_get_with_retry(self, path: str) -> Any:
         """GET with a short backoff for timeouts, connection errors, 429s, and 5xx."""

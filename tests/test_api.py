@@ -4,7 +4,12 @@ import time
 
 import pytest
 
-from custom_components.halo_collar.api import HaloApiClient, HaloApiError, HaloAuthError
+from custom_components.halo_collar.api import (
+    HaloApiClient,
+    HaloApiError,
+    HaloAuthError,
+    HaloWriteOutcomeUnknown,
+)
 
 
 class FakeResponse:
@@ -236,8 +241,29 @@ async def test_fence_writes_do_not_follow_redirects_or_replay():
     client._access_token = "access"
     client._expires_at = time.time() + 3600
 
-    with pytest.raises(HaloApiError, match="HTTP 307"):
+    with pytest.raises(HaloWriteOutcomeUnknown, match="HTTP 307"):
         await client.async_set_fences_enabled("pet-1", enabled=False)
+
+    assert len(session.puts) == 1
+    assert session.put_redirects == [False]
+
+
+class InvalidWriteResponseSession(FakeSession):
+    async def put(self, url, json=None, headers=None, allow_redirects=True):
+        self.put_redirects.append(allow_redirects)
+        self.puts.append((url, json, headers))
+        return FakeResponse(200, ["unexpected"])
+
+
+@pytest.mark.asyncio
+async def test_invalid_write_success_body_has_unknown_outcome_without_replay():
+    session = InvalidWriteResponseSession()
+    client = _new_client(session)
+    client._access_token = "access"
+    client._expires_at = time.time() + 3600
+
+    with pytest.raises(HaloWriteOutcomeUnknown, match="invalid success response"):
+        await client.async_set_fences_enabled("pet-1", enabled=True)
 
     assert len(session.puts) == 1
     assert session.put_redirects == [False]
@@ -256,7 +282,7 @@ async def test_fence_writes_are_not_retried_or_refreshed_after_401():
     client._access_token = "access"
     client._expires_at = time.time() + 3600
 
-    with pytest.raises(HaloApiError, match="not retried"):
+    with pytest.raises(HaloWriteOutcomeUnknown, match="not retried"):
         await client.async_set_fences_enabled("pet-1", enabled=False)
 
     assert len(session.puts) == 1
@@ -276,7 +302,7 @@ async def test_fence_writes_are_not_retried_on_server_failure():
     client._access_token = "access"
     client._expires_at = time.time() + 3600
 
-    with pytest.raises(HaloApiError, match="HTTP 503"):
+    with pytest.raises(HaloWriteOutcomeUnknown, match="HTTP 503"):
         await client.async_set_fences_enabled("pet-1", enabled=False)
 
     assert len(session.puts) == 1
