@@ -56,6 +56,16 @@ def test_pet_mapping_fails_closed_on_conflicting_relationships():
     assert pet_for_collar(pets, collar) is None
 
 
+def test_pet_mapping_fails_closed_on_duplicate_pet_ids():
+    pets = [
+        {"id": "pet-1", "collarInfo": {"id": "collar-1"}},
+        {"id": "pet-1", "collarInfo": {"id": "collar-2"}},
+    ]
+    collar = {"id": "collar-1", "petInfo": {"id": "pet-1"}}
+
+    assert pet_for_collar(pets, collar) is None
+
+
 def test_active_walk_is_detected_from_either_payload():
     assert has_active_walk({"telemetry": {"walk": {"id": "walk-1"}}}, {}) is True
     assert has_active_walk({}, {"telemetry": {"walk": {"id": "walk-1"}}}) is True

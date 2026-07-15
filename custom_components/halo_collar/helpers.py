@@ -92,9 +92,10 @@ def pet_for_collar(pets: list[dict[str, Any]], collar: dict[str, Any]) -> dict[s
     collar_id = collar.get("id")
 
     if pet_id:
-        pet_match = next((pet for pet in pets if pet.get("id") == pet_id), None)
-        if pet_match is None:
+        pet_matches = [pet for pet in pets if pet.get("id") == pet_id]
+        if len(pet_matches) != 1:
             return None
+        pet_match = pet_matches[0]
         linked_collar_id = nested(pet_match, "collarInfo", "id")
         if linked_collar_id and collar_id and linked_collar_id != collar_id:
             return None

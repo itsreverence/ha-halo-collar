@@ -116,27 +116,34 @@ class HaloApiClient:
     async def _async_put_json(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         await self._async_refresh_if_needed()
         response = await self._async_put_once(path, payload)
-        if response.status == 401:
-            await response.text()
-            raise HaloWriteOutcomeUnknown(
-                f"PUT {path} returned HTTP 401; write was not retried because outcome is unknown"
-            )
-        if not 200 <= response.status < 300:
-            text = await response.text()
-            raise HaloWriteOutcomeUnknown(
-                f"PUT {path} returned HTTP {response.status}; outcome is unknown: {text[:200]}"
-            )
         try:
+            if response.status == 401:
+                await response.text()
+                raise HaloWriteOutcomeUnknown(
+                    f"PUT {path} returned HTTP 401; write was not retried "
+                    "because outcome is unknown"
+                )
+            if not 200 <= response.status < 300:
+                text = await response.text()
+                raise HaloWriteOutcomeUnknown(
+                    f"PUT {path} returned HTTP {response.status}; outcome is unknown: {text[:200]}"
+                )
             result = await response.json(content_type=None)
-        except (aiohttp.ClientError, ValueError) as err:
+            if not isinstance(result, dict):
+                raise HaloWriteOutcomeUnknown(
+                    f"PUT {path} returned an invalid success response; outcome is unknown"
+                )
+            return result
+        except HaloWriteOutcomeUnknown:
+            raise
+        except (TimeoutError, aiohttp.ClientError, ValueError) as err:
             raise HaloWriteOutcomeUnknown(
-                f"PUT {path} returned an unreadable success response; outcome is unknown"
+                f"PUT {path} response processing failed; outcome is unknown"
             ) from err
-        if not isinstance(result, dict):
-            raise HaloWriteOutcomeUnknown(
-                f"PUT {path} returned an invalid success response; outcome is unknown"
-            )
-        return result
+        finally:
+            release = getattr(response, "release", None)
+            if callable(release):
+                release()
 
     async def _async_put_once(self, path: str, payload: dict[str, Any]) -> Any:
         try:

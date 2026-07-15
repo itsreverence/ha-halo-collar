@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 
+import aiohttp
 import pytest
 
 from custom_components.halo_collar.api import (
@@ -16,12 +17,16 @@ class FakeResponse:
     def __init__(self, status, payload):
         self.status = status
         self._payload = payload
+        self.released = False
 
     async def json(self, content_type=None):
         return self._payload
 
     async def text(self):
         return str(self._payload)
+
+    def release(self):
+        self.released = True
 
 
 class FakeSession:
@@ -246,6 +251,38 @@ async def test_fence_writes_do_not_follow_redirects_or_replay():
 
     assert len(session.puts) == 1
     assert session.put_redirects == [False]
+
+
+class BrokenBodyResponse(FakeResponse):
+    async def text(self):
+        raise aiohttp.ClientPayloadError("truncated body")
+
+
+class BrokenBodyWriteSession(FakeSession):
+    def __init__(self, status):
+        super().__init__()
+        self.response = BrokenBodyResponse(status, {})
+
+    async def put(self, url, json=None, headers=None, allow_redirects=True):
+        self.put_redirects.append(allow_redirects)
+        self.puts.append((url, json, headers))
+        return self.response
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [401, 503])
+async def test_write_status_body_failures_have_unknown_outcome_without_replay(status):
+    session = BrokenBodyWriteSession(status)
+    client = _new_client(session)
+    client._access_token = "access"
+    client._expires_at = time.time() + 3600
+
+    with pytest.raises(HaloWriteOutcomeUnknown, match="response processing failed"):
+        await client.async_set_fences_enabled("pet-1", enabled=False)
+
+    assert len(session.puts) == 1
+    assert session.put_redirects == [False]
+    assert session.response.released is True
 
 
 class InvalidWriteResponseSession(FakeSession):
