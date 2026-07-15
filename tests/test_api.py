@@ -23,6 +23,7 @@ class FakeSession:
     def __init__(self, token_status=200):
         self.posts = []
         self.gets = []
+        self.puts = []
         self._token_status = token_status
 
     async def post(self, url, data=None, headers=None):
@@ -49,6 +50,18 @@ class FakeSession:
         if url.endswith("/system/server-date-time"):
             return FakeResponse(200, "2026-07-06T00:32:03Z")
         return FakeResponse(404, {})
+
+    async def put(self, url, json=None, headers=None):
+        assert json is not None
+        self.puts.append((url, json, headers))
+        enabled = json["modePatch"]["fencesOn"]
+        return FakeResponse(
+            200,
+            {
+                "desiredMode": {"fencesOn": enabled},
+                "telemetry": {"mode": {"fencesOn": enabled}},
+            },
+        )
 
 
 @pytest.mark.asyncio
@@ -188,3 +201,38 @@ async def test_token_endpoint_outage_is_not_an_auth_error():
     with pytest.raises(HaloApiError) as excinfo:
         await client.async_login("user@example.com", "hunter2", scope="openid")
     assert not isinstance(excinfo.value, HaloAuthError)
+
+
+@pytest.mark.asyncio
+async def test_set_fences_enabled_uses_recovered_instant_mode_contract():
+    session = FakeSession()
+    client = _new_client(session)
+    client._access_token = "access"
+    client._expires_at = time.time() + 3600
+
+    response = await client.async_set_fences_enabled("pet-1", enabled=True)
+
+    url, payload, headers = session.puts[0]
+    assert url == "https://api.example/pet/pet-1/instant-mode"
+    assert payload == {"modePatch": {"fencesOn": True}}
+    assert headers["Authorization"] == "Bearer access"
+    assert response["desiredMode"]["fencesOn"] is True
+
+
+class FailedWriteSession(FakeSession):
+    async def put(self, url, json=None, headers=None):
+        self.puts.append((url, json, headers))
+        return FakeResponse(503, {"error": "unavailable"})
+
+
+@pytest.mark.asyncio
+async def test_fence_writes_are_not_retried_on_server_failure():
+    session = FailedWriteSession()
+    client = _new_client(session)
+    client._access_token = "access"
+    client._expires_at = time.time() + 3600
+
+    with pytest.raises(HaloApiError, match="HTTP 503"):
+        await client.async_set_fences_enabled("pet-1", enabled=False)
+
+    assert len(session.puts) == 1

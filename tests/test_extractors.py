@@ -4,12 +4,50 @@ from datetime import UTC, datetime
 
 from custom_components.halo_collar.helpers import (
     REDACTED,
+    has_active_walk,
     indoors_on_wifi,
     is_online,
     last_telemetry,
+    pet_fences_enabled,
+    pet_for_collar,
+    pet_safety_status,
     redact,
     sensor_values,
 )
+
+
+def test_pet_mapping_and_control_state_use_live_payload_relationships():
+    pets = [
+        {
+            "id": "pet-1",
+            "collarInfo": {"id": "collar-1"},
+            "telemetry": {
+                "mode": {"fencesOn": True},
+                "safetyStatus": "safe",
+            },
+            "desiredMode": {"fencesOn": True},
+            "isFencesSynchronized": True,
+        }
+    ]
+    collar = {"id": "collar-1", "petInfo": {"id": "pet-1"}}
+
+    pet = pet_for_collar(pets, collar)
+
+    assert pet is pets[0]
+    assert pet_fences_enabled(pet) is True
+    assert pet_safety_status(pet) == "Safe"
+
+
+def test_pet_mapping_and_control_state_fail_closed_when_unknown():
+    assert pet_for_collar([], {"id": "collar-1"}) is None
+    assert pet_fences_enabled(None) is None
+    assert pet_safety_status(None) is None
+
+
+def test_active_walk_is_detected_from_either_payload():
+    assert has_active_walk({"telemetry": {"walk": {"id": "walk-1"}}}, {}) is True
+    assert has_active_walk({}, {"telemetry": {"walk": {"id": "walk-1"}}}) is True
+    assert has_active_walk({"telemetry": {"walk": None}}, {}) is False
 
 
 def test_sensor_extractors_cover_live_payload_shape():

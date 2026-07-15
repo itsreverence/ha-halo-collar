@@ -5,8 +5,10 @@ from datetime import timedelta
 
 from .const import (
     CONF_ACCESS_TOKEN,
+    CONF_ALLOW_FENCE_DISABLE,
     CONF_CLIENT_ID,
     CONF_CLIENT_SECRET,
+    CONF_ENABLE_FENCE_CONTROLS,
     CONF_EXPIRES_AT,
     CONF_REFRESH_TOKEN,
     CONF_SCAN_INTERVAL,
@@ -24,6 +26,13 @@ _LOGGER = logging.getLogger(__name__)
 def _scan_interval(entry) -> timedelta:
     seconds = entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL_SECONDS)
     return timedelta(seconds=int(seconds))
+
+
+def _controls_signature(entry) -> tuple[bool, bool]:
+    return (
+        bool(entry.options.get(CONF_ENABLE_FENCE_CONTROLS, False)),
+        bool(entry.options.get(CONF_ALLOW_FENCE_DISABLE, False)),
+    )
 
 
 async def async_setup_entry(hass, entry) -> bool:
@@ -68,6 +77,7 @@ async def async_setup_entry(hass, entry) -> bool:
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
         "client": client,
         "coordinator": coordinator,
+        "controls_signature": _controls_signature(entry),
     }
     # Applied in place rather than via reload: the entry is also updated when
     # refreshed tokens are persisted, and a reload there would loop.
@@ -84,6 +94,10 @@ async def _async_entry_updated(hass, entry) -> None:
     if stored is None:
         return
     coordinator = stored["coordinator"]
+    controls_signature = _controls_signature(entry)
+    if controls_signature != stored["controls_signature"]:
+        await hass.config_entries.async_reload(entry.entry_id)
+        return
     interval = _scan_interval(entry)
     if coordinator.update_interval != interval:
         coordinator.update_interval = interval

@@ -12,18 +12,18 @@ from homeassistant.components.binary_sensor import (
 
 from .const import CONF_STALE_AFTER, DEFAULT_STALE_AFTER_SECONDS, DOMAIN
 from .entity import HaloEntity
-from .helpers import is_online
+from .helpers import is_online, pet_fences_enabled
 
 
-def _online(collar: dict[str, Any], entry) -> bool:
+def _online(collar: dict[str, Any], _pet, entry) -> bool:
     stale_after = entry.options.get(CONF_STALE_AFTER, DEFAULT_STALE_AFTER_SECONDS)
     return is_online(collar, stale_after=float(stale_after))
 
 
 @dataclass(frozen=True, kw_only=True)
 class HaloBinarySensorDescription(BinarySensorEntityDescription):
-    # value_fn receives (collar, config entry) so options can be read at evaluation time.
-    value_fn: Callable[[dict[str, Any], Any], bool]
+    # value_fn receives (collar, pet, config entry).
+    value_fn: Callable[[dict[str, Any], dict[str, Any] | None, Any], bool | None]
 
 
 BINARY_SENSORS = (
@@ -37,19 +37,38 @@ BINARY_SENSORS = (
         key="fence_breach",
         translation_key="fence_breach",
         device_class=BinarySensorDeviceClass.SAFETY,
-        value_fn=lambda c, _: c.get("telemetry", {}).get("fenceBreach") is not None,
+        value_fn=lambda c, _pet, _entry: c.get("telemetry", {}).get("fenceBreach") is not None,
     ),
     HaloBinarySensorDescription(
         key="gps_calibration_required",
         translation_key="gps_calibration_required",
         device_class=BinarySensorDeviceClass.PROBLEM,
-        value_fn=lambda c, _: bool(c.get("telemetry", {}).get("isGpsCalibrationRequired")),
+        value_fn=lambda c, _pet, _entry: bool(
+            c.get("telemetry", {}).get("isGpsCalibrationRequired")
+        ),
     ),
     HaloBinarySensorDescription(
         key="compass_calibration_required",
         translation_key="compass_calibration_required",
         device_class=BinarySensorDeviceClass.PROBLEM,
-        value_fn=lambda c, _: bool(c.get("telemetry", {}).get("isCompassCalibrationRequired")),
+        value_fn=lambda c, _pet, _entry: bool(
+            c.get("telemetry", {}).get("isCompassCalibrationRequired")
+        ),
+    ),
+    HaloBinarySensorDescription(
+        key="fences_enabled",
+        translation_key="fences_enabled",
+        value_fn=lambda _c, pet, _entry: pet_fences_enabled(pet),
+    ),
+    HaloBinarySensorDescription(
+        key="fences_synchronized",
+        translation_key="fences_synchronized",
+        device_class=BinarySensorDeviceClass.CONNECTIVITY,
+        value_fn=lambda _c, pet, _entry: (
+            pet.get("isFencesSynchronized")
+            if pet is not None and isinstance(pet.get("isFencesSynchronized"), bool)
+            else None
+        ),
     ),
 )
 
@@ -82,4 +101,4 @@ class HaloBinarySensor(HaloEntity, BinarySensorEntity):
         collar = self.collar
         if collar is None:
             return None
-        return self.entity_description.value_fn(collar, self._entry)
+        return self.entity_description.value_fn(collar, self.pet, self._entry)

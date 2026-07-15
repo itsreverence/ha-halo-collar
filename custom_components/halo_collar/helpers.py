@@ -86,6 +86,42 @@ def nested(collar: dict[str, Any], *keys: str) -> Any:
     return value
 
 
+def pet_for_collar(pets: list[dict[str, Any]], collar: dict[str, Any]) -> dict[str, Any] | None:
+    """Match Halo's pet payload to its collar without relying on names."""
+    pet_id = nested(collar, "petInfo", "id")
+    collar_id = collar.get("id")
+    for pet in pets:
+        if pet_id and pet.get("id") == pet_id:
+            return pet
+        if collar_id and nested(pet, "collarInfo", "id") == collar_id:
+            return pet
+    return None
+
+
+def pet_fences_enabled(pet: dict[str, Any] | None) -> bool | None:
+    """Return reported fence mode, falling back to desired state if needed."""
+    if pet is None:
+        return None
+    reported = nested(pet, "telemetry", "mode", "fencesOn")
+    if isinstance(reported, bool):
+        return reported
+    desired = nested(pet, "desiredMode", "fencesOn")
+    return desired if isinstance(desired, bool) else None
+
+
+def pet_safety_status(pet: dict[str, Any] | None) -> Any:
+    """Return current pet safety status from the live pet telemetry payload."""
+    return pretty_status(nested(pet or {}, "telemetry", "safetyStatus"))
+
+
+def has_active_walk(pet: dict[str, Any] | None, collar: dict[str, Any] | None) -> bool:
+    """Return whether either Halo payload reports a current walk."""
+    return (
+        nested(pet or {}, "telemetry", "walk") is not None
+        or nested(collar or {}, "telemetry", "walk") is not None
+    )
+
+
 def parse_timestamp(value: str | None) -> datetime | None:
     if not value:
         return None

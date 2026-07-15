@@ -5,6 +5,7 @@ import logging
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
+from urllib.parse import quote
 
 import aiohttp
 
@@ -95,6 +96,45 @@ class HaloApiClient:
             text = await response.text()
             raise HaloApiError(f"GET {path} failed: HTTP {response.status}: {text[:200]}")
         return await response.json(content_type=None)
+
+    async def async_set_fences_enabled(self, pet_id: str, *, enabled: bool) -> dict[str, Any]:
+        """Set the pet's fence mode through Halo's instant-mode endpoint.
+
+        Writes are deliberately not retried on 429/5xx or connection errors:
+        callers must refresh state before deciding whether another write is safe.
+        """
+        if not pet_id:
+            raise HaloApiError("Pet ID is required to change fence mode")
+        payload = {"modePatch": {"fencesOn": enabled}}
+        path = f"/pet/{quote(pet_id, safe='')}/instant-mode"
+        return await self._async_put_json(path, payload)
+
+    async def _async_put_json(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+        await self._async_refresh_if_needed()
+        response = await self._async_put_once(path, payload)
+        if response.status == 401:
+            await self.async_refresh_token()
+            response = await self._async_put_once(path, payload)
+            if response.status == 401:
+                raise HaloAuthError(f"PUT {path} unauthorized even after a token refresh")
+        if response.status >= 400:
+            text = await response.text()
+            raise HaloApiError(f"PUT {path} failed: HTTP {response.status}: {text[:200]}")
+        result = await response.json(content_type=None)
+        if not isinstance(result, dict):
+            raise HaloApiError(f"PUT {path} returned an invalid response")
+        return result
+
+    async def _async_put_once(self, path: str, payload: dict[str, Any]) -> Any:
+        try:
+            async with asyncio.timeout(REQUEST_TIMEOUT_SECONDS):
+                return await self._session.put(
+                    f"{self._api_base}{path}",
+                    json=payload,
+                    headers=self._headers(),
+                )
+        except (TimeoutError, aiohttp.ClientError) as err:
+            raise HaloApiError(f"PUT {path} failed: {err!r}") from err
 
     async def _async_get_with_retry(self, path: str) -> Any:
         """GET with a short backoff for timeouts, connection errors, 429s, and 5xx."""

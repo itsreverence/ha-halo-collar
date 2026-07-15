@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Halo Collar",
-        "description": "Sign in with the email and password you use in the Halo mobile app. This integration is read-only and unofficial. The advanced OAuth client fields can be left at their defaults.",
+        "description": "Sign in with the email and password you use in the Halo mobile app. This integration is telemetry-only by default and unofficial. The advanced OAuth client fields can be left at their defaults.",
         "data": {
           "email": "Email",
           "password": "Password",
@@ -36,11 +36,15 @@
         "title": "Halo Collar options",
         "data": {
           "scan_interval": "Update interval (seconds)",
-          "stale_after": "Offline after (seconds)"
+          "stale_after": "Offline after (seconds)",
+          "enable_fence_controls": "Enable fail-safe fence controls",
+          "allow_fence_disable": "Allow fences to be disabled"
         },
         "data_description": {
           "scan_interval": "How often to poll the Halo cloud for new telemetry. Between 60 and 3600 seconds; the collar itself typically reports every few minutes.",
-          "stale_after": "How long after the collar's last report the connectivity sensor turns off. Between 120 and 86400 seconds."
+          "stale_after": "How long after the collar's last report the connectivity sensor turns off. Between 120 and 86400 seconds.",
+          "enable_fence_controls": "Adds an idempotent Enable fences button. Controls remain unavailable when collar telemetry is stale.",
+          "allow_fence_disable": "Also adds a Fence mode switch that can disable containment. This is a separate high-risk opt-in and is blocked during an active walk."
         }
       }
     }
@@ -65,7 +69,15 @@
       "online": {"name": "Connectivity"},
       "fence_breach": {"name": "Fence breach"},
       "gps_calibration_required": {"name": "GPS calibration required"},
-      "compass_calibration_required": {"name": "Compass calibration required"}
+      "compass_calibration_required": {"name": "Compass calibration required"},
+      "fences_enabled": {"name": "Fences enabled"},
+      "fences_synchronized": {"name": "Fence state synchronized"}
+    },
+    "button": {
+      "enable_fences": {"name": "Enable fences"}
+    },
+    "switch": {
+      "fence_mode": {"name": "Fence mode"}
     },
     "device_tracker": {
       "pet_tracker": {"name": "Location"}

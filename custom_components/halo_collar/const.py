@@ -22,10 +22,16 @@ DEFAULT_SCAN_INTERVAL_SECONDS = 300
 MIN_SCAN_INTERVAL_SECONDS = 60
 MAX_SCAN_INTERVAL_SECONDS = 3600
 
+# Write controls are explicit opt-ins. Fence disabling is a separate, stronger opt-in.
+CONF_ENABLE_FENCE_CONTROLS = "enable_fence_controls"
+CONF_ALLOW_FENCE_DISABLE = "allow_fence_disable"
+DEFAULT_ENABLE_FENCE_CONTROLS = False
+DEFAULT_ALLOW_FENCE_DISABLE = False
+
 # How long after the last collar report the connectivity sensor turns "offline".
 CONF_STALE_AFTER = "stale_after"
 DEFAULT_STALE_AFTER_SECONDS = 900
 MIN_STALE_AFTER_SECONDS = 120
 MAX_STALE_AFTER_SECONDS = 86400
 
-PLATFORMS = ["sensor", "binary_sensor", "device_tracker", "event"]
+PLATFORMS = ["sensor", "binary_sensor", "device_tracker", "event", "button", "switch"]
