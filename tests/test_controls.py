@@ -289,6 +289,41 @@ async def test_unconfirmed_result_reports_ambiguous_outcome_without_second_write
 
 
 @pytest.mark.asyncio
+async def test_cancellation_after_dispatch_waits_for_reconciliation_and_lock_release():
+    coordinator = FakeCoordinator(
+        [(_pet(fences_on=False), _collar()), (_pet(fences_on=True), _collar())]
+    )
+    client = BlockingClient()
+    control_lock = asyncio.Lock()
+
+    action_task = asyncio.create_task(
+        _execute(
+            coordinator,
+            client,
+            _entry(),
+            enabled=True,
+            control_lock=control_lock,
+        )
+    )
+    await client.started.wait()
+
+    action_task.cancel()
+    await asyncio.sleep(0)
+
+    assert control_lock.locked() is True
+    assert coordinator.refreshes == 1
+    assert client.writes == [("pet-1", True)]
+
+    client.release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await action_task
+
+    assert coordinator.refreshes == 2
+    assert control_lock.locked() is False
+    assert client.writes == [("pet-1", True)]
+
+
+@pytest.mark.asyncio
 async def test_contradictory_transactions_share_one_collar_lock():
     coordinator = FakeCoordinator(
         [(_pet(fences_on=False), _collar()), (_pet(fences_on=True), _collar())]

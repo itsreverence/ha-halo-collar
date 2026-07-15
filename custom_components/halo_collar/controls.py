@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 from asyncio import Lock
-from collections.abc import Callable
+from collections.abc import Callable, Coroutine
 from typing import Any
 
 from .api import HaloWriteOutcomeUnknown
@@ -49,6 +50,56 @@ def _is_confirmed(
     )
 
 
+async def _async_dispatch_and_reconcile(
+    *, coordinator, client, pet_id: str, state_getter, enabled: bool
+) -> None:
+    try:
+        await client.async_set_fences_enabled(pet_id, enabled=enabled)
+    except HaloWriteOutcomeUnknown as err:
+        await coordinator.async_refresh()
+        if coordinator.last_update_success and _is_confirmed(state_getter, enabled=enabled):
+            return
+        raise HaloControlError(
+            "Halo write outcome is unknown and could not be reconciled; check the official Halo app"
+        ) from err
+
+    await coordinator.async_refresh()
+    if not coordinator.last_update_success:
+        raise HaloControlError(
+            "Halo command was sent but state confirmation failed; check the official Halo app"
+        )
+    if not _is_confirmed(state_getter, enabled=enabled):
+        raise HaloControlError(
+            "Halo command was sent but the collar did not confirm the requested fence state"
+        )
+
+
+async def _async_finish_committed_phase(coro: Coroutine[Any, Any, None]) -> None:
+    """Finish dispatch/reconciliation before propagating caller cancellation."""
+    task = asyncio.create_task(coro)
+    cancelled = False
+    while True:
+        try:
+            await asyncio.shield(task)
+            break
+        except asyncio.CancelledError:
+            cancelled = True
+            if task.done():
+                break
+        except Exception as err:
+            if cancelled:
+                raise asyncio.CancelledError from err
+            raise
+
+    if cancelled:
+        try:
+            task.result()
+        except Exception as err:
+            raise asyncio.CancelledError from err
+        raise asyncio.CancelledError
+    task.result()
+
+
 async def async_set_fence_mode(
     *,
     coordinator,
@@ -80,23 +131,12 @@ async def async_set_fence_mode(
         # Options can change while the preflight refresh is in flight. Recheck
         # immediately before the one and only network write.
         _validate_options(entry, enabled=enabled)
-        try:
-            await client.async_set_fences_enabled(pet["id"], enabled=enabled)
-        except HaloWriteOutcomeUnknown as err:
-            await coordinator.async_refresh()
-            if coordinator.last_update_success and _is_confirmed(state_getter, enabled=enabled):
-                return
-            raise HaloControlError(
-                "Halo write outcome is unknown and could not be reconciled; "
-                "check the official Halo app"
-            ) from err
-
-        await coordinator.async_refresh()
-        if not coordinator.last_update_success:
-            raise HaloControlError(
-                "Halo command was sent but state confirmation failed; check the official Halo app"
+        await _async_finish_committed_phase(
+            _async_dispatch_and_reconcile(
+                coordinator=coordinator,
+                client=client,
+                pet_id=pet["id"],
+                state_getter=state_getter,
+                enabled=enabled,
             )
-        if not _is_confirmed(state_getter, enabled=enabled):
-            raise HaloControlError(
-                "Halo command was sent but the collar did not confirm the requested fence state"
-            )
+        )
