@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -10,6 +10,7 @@ from custom_components.halo_collar.api import HaloWriteOutcomeUnknown
 from custom_components.halo_collar.const import (
     CONF_ALLOW_FENCE_DISABLE,
     CONF_ENABLE_FENCE_CONTROLS,
+    CONF_STALE_AFTER,
 )
 from custom_components.halo_collar.controls import (
     HaloControlError,
@@ -295,6 +296,50 @@ async def test_dispatch_boundary_revalidates_identity_and_disable_safety(
 
     assert coordinator.refreshes == 1
     assert client.writes == []
+
+
+@pytest.mark.asyncio
+async def test_dispatch_boundary_preserves_strictest_freshness_threshold():
+    timestamp = (datetime.now(UTC) - timedelta(seconds=500)).isoformat()
+    coordinator = FakeCoordinator([(_pet(), _collar(timestamp=timestamp))])
+    entry = _entry(allow_disable=True)
+    entry.options[CONF_STALE_AFTER] = 900
+
+    def tighten_threshold():
+        entry.options[CONF_STALE_AFTER] = 120
+
+    client = MutatingAtDispatchClient(tighten_threshold)
+
+    with pytest.raises(HaloControlError, match="stale"):
+        await _execute(coordinator, client, entry, enabled=False)
+
+    assert coordinator.refreshes == 1
+    assert client.writes == []
+
+
+@pytest.mark.asyncio
+async def test_looser_midflight_threshold_does_not_weaken_confirmation():
+    fresh = (datetime.now(UTC) - timedelta(seconds=60)).isoformat()
+    newly_stale = (datetime.now(UTC) - timedelta(seconds=500)).isoformat()
+    coordinator = FakeCoordinator(
+        [
+            (_pet(fences_on=False), _collar(timestamp=fresh)),
+            (_pet(fences_on=True), _collar(timestamp=newly_stale)),
+        ]
+    )
+    entry = _entry()
+    entry.options[CONF_STALE_AFTER] = 120
+
+    def loosen_threshold():
+        entry.options[CONF_STALE_AFTER] = 900
+
+    client = MutatingAtDispatchClient(loosen_threshold)
+
+    with pytest.raises(HaloControlError, match="did not confirm"):
+        await _execute(coordinator, client, entry, enabled=True)
+
+    assert coordinator.refreshes == 2
+    assert client.writes == [("pet-1", True)]
 
 
 @pytest.mark.asyncio

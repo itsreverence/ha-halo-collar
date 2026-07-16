@@ -53,7 +53,7 @@ def _is_confirmed(
     enabled: bool,
     pet_id: str,
     collar_id: str,
-    stale_after: float,
+    stale_after_getter: Callable[[], float],
 ) -> bool:
     pet, collar = state_getter()
     return (
@@ -61,7 +61,7 @@ def _is_confirmed(
         and collar is not None
         and pet.get("id") == pet_id
         and collar.get("id") == collar_id
-        and is_online(collar, stale_after=stale_after)
+        and is_online(collar, stale_after=stale_after_getter())
         and pet.get("isFencesSynchronized") is True
         and pet_fences_enabled(pet) is enabled
     )
@@ -100,7 +100,7 @@ async def _async_dispatch_and_reconcile(
     collar_id: str,
     state_getter,
     enabled: bool,
-    stale_after: float,
+    stale_after_getter: Callable[[], float],
     pre_dispatch,
 ) -> None:
     try:
@@ -116,7 +116,7 @@ async def _async_dispatch_and_reconcile(
             enabled=enabled,
             pet_id=pet_id,
             collar_id=collar_id,
-            stale_after=stale_after,
+            stale_after_getter=stale_after_getter,
         ):
             return
         raise HaloControlError(
@@ -133,7 +133,7 @@ async def _async_dispatch_and_reconcile(
         enabled=enabled,
         pet_id=pet_id,
         collar_id=collar_id,
-        stale_after=stale_after,
+        stale_after_getter=stale_after_getter,
     ):
         raise HaloControlError(
             "Halo command was sent but the collar did not confirm the requested fence state"
@@ -184,6 +184,16 @@ async def async_set_fence_mode(
             raise HaloControlError("Could not refresh Halo state before changing fence mode")
 
         stale_after = control_stale_after(entry)
+        strictest_stale_after = stale_after
+
+        def current_strictest_stale_after() -> float:
+            nonlocal strictest_stale_after
+            strictest_stale_after = min(
+                strictest_stale_after,
+                control_stale_after(entry),
+            )
+            return strictest_stale_after
+
         pet, collar = _validate_snapshot(
             state_getter,
             enabled=enabled,
@@ -197,7 +207,7 @@ async def async_set_fence_mode(
             _validate_snapshot(
                 state_getter,
                 enabled=enabled,
-                stale_after=stale_after,
+                stale_after=current_strictest_stale_after(),
                 expected_pet_id=pet_id,
                 expected_collar_id=collar_id,
             )
@@ -214,7 +224,7 @@ async def async_set_fence_mode(
                 collar_id=collar_id,
                 state_getter=state_getter,
                 enabled=enabled,
-                stale_after=stale_after,
+                stale_after_getter=current_strictest_stale_after,
                 pre_dispatch=validate_dispatch_boundary,
             )
         )
