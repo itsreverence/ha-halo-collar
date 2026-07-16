@@ -271,6 +271,7 @@ def test_insight_extractors_expose_only_allowlisted_values_and_fail_soft():
 
     assert current_fence_name(pet) == "Synthetic Fence"
     assert fence_configuration_status(pet) == "Up to date"
+    assert fence_configuration_status({"fencesState": "allApplied"}) == "All applied"
     assert average_connectivity(collar) == 99.9
     assert next_expected_telemetry(collar) == datetime(2026, 7, 6, 12, 5, tzinfo=UTC)
     assert reporting_issue(collar) is True
