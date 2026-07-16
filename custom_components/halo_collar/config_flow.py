@@ -12,18 +12,22 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from .api import HaloApiClient, HaloApiError, HaloAuthError
 from .const import (
     CONF_ACCESS_TOKEN,
+    CONF_ALLOW_FENCE_DISABLE,
     CONF_CLIENT_ID,
     CONF_CLIENT_SECRET,
     CONF_EMAIL,
+    CONF_ENABLE_FENCE_CONTROLS,
     CONF_EXPIRES_AT,
     CONF_PASSWORD,
     CONF_REFRESH_TOKEN,
     CONF_SCAN_INTERVAL,
     CONF_STALE_AFTER,
+    DEFAULT_ALLOW_FENCE_DISABLE,
     DEFAULT_API_BASE,
     DEFAULT_AUTH_BASE,
     DEFAULT_CLIENT_ID,
     DEFAULT_CLIENT_SECRET,
+    DEFAULT_ENABLE_FENCE_CONTROLS,
     DEFAULT_SCAN_INTERVAL_SECONDS,
     DEFAULT_STALE_AFTER_SECONDS,
     DEFAULT_TOKEN_SCOPE,
@@ -154,6 +158,8 @@ class HaloCollarConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 class HaloCollarOptionsFlow(config_entries.OptionsFlow):
     async def async_step_init(self, user_input: dict[str, Any] | None = None):
         if user_input is not None:
+            if not user_input.get(CONF_ENABLE_FENCE_CONTROLS):
+                user_input[CONF_ALLOW_FENCE_DISABLE] = False
             return self.async_create_entry(title="", data=user_input)
 
         options = self.config_entry.options
@@ -175,6 +181,16 @@ class HaloCollarOptionsFlow(config_entries.OptionsFlow):
                         vol.Coerce(int),
                         vol.Range(min=MIN_STALE_AFTER_SECONDS, max=MAX_STALE_AFTER_SECONDS),
                     ),
+                    vol.Required(
+                        CONF_ENABLE_FENCE_CONTROLS,
+                        default=options.get(
+                            CONF_ENABLE_FENCE_CONTROLS, DEFAULT_ENABLE_FENCE_CONTROLS
+                        ),
+                    ): bool,
+                    vol.Required(
+                        CONF_ALLOW_FENCE_DISABLE,
+                        default=options.get(CONF_ALLOW_FENCE_DISABLE, DEFAULT_ALLOW_FENCE_DISABLE),
+                    ): bool,
                 }
             ),
         )

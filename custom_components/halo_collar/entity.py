@@ -5,6 +5,7 @@ from typing import Any
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
+from .helpers import pet_for_collar
 
 
 class HaloEntity(CoordinatorEntity):
@@ -29,6 +30,17 @@ class HaloEntity(CoordinatorEntity):
             if collar.get("id") == self._collar_id:
                 return collar
         return None
+
+    @property
+    def pet(self) -> dict[str, Any] | None:
+        collar = self.collar
+        if collar is None:
+            return None
+        return pet_for_collar(
+            self.coordinator.data.pets,
+            collar,
+            self.coordinator.data.collars,
+        )
 
     @property
     def available(self) -> bool:

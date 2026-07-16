@@ -1,16 +1,25 @@
 from __future__ import annotations
 
+import asyncio
 import time
 
+import aiohttp
 import pytest
 
-from custom_components.halo_collar.api import HaloApiClient, HaloApiError, HaloAuthError
+from custom_components.halo_collar import api as halo_api
+from custom_components.halo_collar.api import (
+    HaloApiClient,
+    HaloApiError,
+    HaloAuthError,
+    HaloWriteOutcomeUnknown,
+)
 
 
 class FakeResponse:
     def __init__(self, status, payload):
         self.status = status
         self._payload = payload
+        self.released = False
 
     async def json(self, content_type=None):
         return self._payload
@@ -18,11 +27,16 @@ class FakeResponse:
     async def text(self):
         return str(self._payload)
 
+    def release(self):
+        self.released = True
+
 
 class FakeSession:
     def __init__(self, token_status=200):
         self.posts = []
         self.gets = []
+        self.puts = []
+        self.put_redirects = []
         self._token_status = token_status
 
     async def post(self, url, data=None, headers=None):
@@ -49,6 +63,19 @@ class FakeSession:
         if url.endswith("/system/server-date-time"):
             return FakeResponse(200, "2026-07-06T00:32:03Z")
         return FakeResponse(404, {})
+
+    async def put(self, url, json=None, headers=None, allow_redirects=True):
+        assert json is not None
+        self.put_redirects.append(allow_redirects)
+        self.puts.append((url, json, headers))
+        enabled = json["modePatch"]["fencesOn"]
+        return FakeResponse(
+            200,
+            {
+                "desiredMode": {"fencesOn": enabled},
+                "telemetry": {"mode": {"fencesOn": enabled}},
+            },
+        )
 
 
 @pytest.mark.asyncio
@@ -188,3 +215,185 @@ async def test_token_endpoint_outage_is_not_an_auth_error():
     with pytest.raises(HaloApiError) as excinfo:
         await client.async_login("user@example.com", "hunter2", scope="openid")
     assert not isinstance(excinfo.value, HaloAuthError)
+
+
+@pytest.mark.asyncio
+async def test_set_fences_enabled_uses_recovered_instant_mode_contract():
+    session = FakeSession()
+    client = _new_client(session)
+    client._access_token = "access"
+    client._expires_at = time.time() + 3600
+
+    response = await client.async_set_fences_enabled("pet-1", enabled=True)
+
+    url, payload, headers = session.puts[0]
+    assert url == "https://api.example/pet/pet-1/instant-mode"
+    assert payload == {"modePatch": {"fencesOn": True}}
+    assert headers["Authorization"] == "Bearer access"
+    assert session.put_redirects == [False]
+    assert response["desiredMode"]["fencesOn"] is True
+
+
+@pytest.mark.asyncio
+async def test_pre_dispatch_check_runs_after_token_refresh_and_can_veto_put():
+    session = FakeSession()
+    client = _new_client(session)
+    client._refresh_token = "refresh"
+
+    def veto_after_refresh():
+        assert session.posts[0][1]["grant_type"] == "refresh_token"
+        assert client.token_snapshot["access_token"] == "new-access"
+        raise RuntimeError("options revoked")
+
+    with pytest.raises(RuntimeError, match="options revoked"):
+        await client.async_set_fences_enabled(
+            "pet-1",
+            enabled=False,
+            pre_dispatch=veto_after_refresh,
+        )
+
+    assert session.puts == []
+
+
+class RedirectWriteSession(FakeSession):
+    async def put(self, url, json=None, headers=None, allow_redirects=True):
+        self.put_redirects.append(allow_redirects)
+        self.puts.append((url, json, headers))
+        return FakeResponse(307, {"location": "https://other.example"})
+
+
+@pytest.mark.asyncio
+async def test_fence_writes_do_not_follow_redirects_or_replay():
+    session = RedirectWriteSession()
+    client = _new_client(session)
+    client._access_token = "access"
+    client._expires_at = time.time() + 3600
+
+    with pytest.raises(HaloWriteOutcomeUnknown, match="HTTP 307"):
+        await client.async_set_fences_enabled("pet-1", enabled=False)
+
+    assert len(session.puts) == 1
+    assert session.put_redirects == [False]
+
+
+class BrokenBodyResponse(FakeResponse):
+    async def text(self):
+        raise aiohttp.ClientPayloadError("truncated body")
+
+
+class BrokenBodyWriteSession(FakeSession):
+    def __init__(self, status):
+        super().__init__()
+        self.response = BrokenBodyResponse(status, {})
+
+    async def put(self, url, json=None, headers=None, allow_redirects=True):
+        self.put_redirects.append(allow_redirects)
+        self.puts.append((url, json, headers))
+        return self.response
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [401, 503])
+async def test_write_status_body_failures_have_unknown_outcome_without_replay(status):
+    session = BrokenBodyWriteSession(status)
+    client = _new_client(session)
+    client._access_token = "access"
+    client._expires_at = time.time() + 3600
+
+    with pytest.raises(HaloWriteOutcomeUnknown, match="response processing failed"):
+        await client.async_set_fences_enabled("pet-1", enabled=False)
+
+    assert len(session.puts) == 1
+    assert session.put_redirects == [False]
+    assert session.response.released is True
+
+
+class StalledBodyResponse(FakeResponse):
+    async def json(self, content_type=None):
+        await asyncio.sleep(60)
+
+
+class StalledBodyWriteSession(FakeSession):
+    def __init__(self):
+        super().__init__()
+        self.response = StalledBodyResponse(200, {})
+
+    async def put(self, url, json=None, headers=None, allow_redirects=True):
+        self.put_redirects.append(allow_redirects)
+        self.puts.append((url, json, headers))
+        return self.response
+
+
+@pytest.mark.asyncio
+async def test_write_timeout_covers_response_body_and_releases_response(monkeypatch):
+    monkeypatch.setattr(halo_api, "REQUEST_TIMEOUT_SECONDS", 0.01)
+    session = StalledBodyWriteSession()
+    client = _new_client(session)
+    client._access_token = "access"
+    client._expires_at = time.time() + 3600
+
+    with pytest.raises(HaloWriteOutcomeUnknown, match="response processing failed"):
+        await client.async_set_fences_enabled("pet-1", enabled=True)
+
+    assert len(session.puts) == 1
+    assert session.response.released is True
+
+
+class InvalidWriteResponseSession(FakeSession):
+    async def put(self, url, json=None, headers=None, allow_redirects=True):
+        self.put_redirects.append(allow_redirects)
+        self.puts.append((url, json, headers))
+        return FakeResponse(200, ["unexpected"])
+
+
+@pytest.mark.asyncio
+async def test_invalid_write_success_body_has_unknown_outcome_without_replay():
+    session = InvalidWriteResponseSession()
+    client = _new_client(session)
+    client._access_token = "access"
+    client._expires_at = time.time() + 3600
+
+    with pytest.raises(HaloWriteOutcomeUnknown, match="invalid success response"):
+        await client.async_set_fences_enabled("pet-1", enabled=True)
+
+    assert len(session.puts) == 1
+    assert session.put_redirects == [False]
+
+
+class UnauthorizedWriteSession(FakeSession):
+    async def put(self, url, json=None, headers=None, allow_redirects=True):
+        self.puts.append((url, json, headers))
+        return FakeResponse(401, {"error": "unauthorized"})
+
+
+@pytest.mark.asyncio
+async def test_fence_writes_are_not_retried_or_refreshed_after_401():
+    session = UnauthorizedWriteSession()
+    client = _new_client(session)
+    client._access_token = "access"
+    client._expires_at = time.time() + 3600
+
+    with pytest.raises(HaloWriteOutcomeUnknown, match="not retried"):
+        await client.async_set_fences_enabled("pet-1", enabled=False)
+
+    assert len(session.puts) == 1
+    assert session.posts == []
+
+
+class FailedWriteSession(FakeSession):
+    async def put(self, url, json=None, headers=None, allow_redirects=True):
+        self.puts.append((url, json, headers))
+        return FakeResponse(503, {"error": "unavailable"})
+
+
+@pytest.mark.asyncio
+async def test_fence_writes_are_not_retried_on_server_failure():
+    session = FailedWriteSession()
+    client = _new_client(session)
+    client._access_token = "access"
+    client._expires_at = time.time() + 3600
+
+    with pytest.raises(HaloWriteOutcomeUnknown, match="HTTP 503"):
+        await client.async_set_fences_enabled("pet-1", enabled=False)
+
+    assert len(session.puts) == 1

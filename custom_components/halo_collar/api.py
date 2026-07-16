@@ -3,8 +3,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
+from urllib.parse import quote
 
 import aiohttp
 
@@ -27,6 +29,10 @@ class HaloApiError(Exception):
 
 class HaloAuthError(HaloApiError):
     """Raised when Halo authentication (login or token refresh) fails."""
+
+
+class HaloWriteOutcomeUnknown(HaloApiError):
+    """Raised when a dispatched write may have reached Halo but was not confirmed."""
 
 
 @dataclass(slots=True)
@@ -95,6 +101,86 @@ class HaloApiClient:
             text = await response.text()
             raise HaloApiError(f"GET {path} failed: HTTP {response.status}: {text[:200]}")
         return await response.json(content_type=None)
+
+    async def async_set_fences_enabled(
+        self,
+        pet_id: str,
+        *,
+        enabled: bool,
+        pre_dispatch: Callable[[], None] | None = None,
+    ) -> dict[str, Any]:
+        """Set the pet's fence mode through Halo's instant-mode endpoint.
+
+        Writes are deliberately not retried on 429/5xx or connection errors:
+        callers must refresh state before deciding whether another write is safe.
+        """
+        if not pet_id:
+            raise HaloApiError("Pet ID is required to change fence mode")
+        payload = {"modePatch": {"fencesOn": enabled}}
+        path = f"/pet/{quote(pet_id, safe='')}/instant-mode"
+        return await self._async_put_json(path, payload, pre_dispatch=pre_dispatch)
+
+    async def _async_put_json(
+        self,
+        path: str,
+        payload: dict[str, Any],
+        *,
+        pre_dispatch: Callable[[], None] | None = None,
+    ) -> dict[str, Any]:
+        await self._async_refresh_if_needed()
+        response = None
+        try:
+            async with asyncio.timeout(REQUEST_TIMEOUT_SECONDS):
+                response = await self._async_put_once(path, payload, pre_dispatch=pre_dispatch)
+                if response.status == 401:
+                    await response.text()
+                    raise HaloWriteOutcomeUnknown(
+                        f"PUT {path} returned HTTP 401; write was not retried "
+                        "because outcome is unknown"
+                    )
+                if not 200 <= response.status < 300:
+                    text = await response.text()
+                    raise HaloWriteOutcomeUnknown(
+                        f"PUT {path} returned HTTP {response.status}; "
+                        f"outcome is unknown: {text[:200]}"
+                    )
+                result = await response.json(content_type=None)
+                if not isinstance(result, dict):
+                    raise HaloWriteOutcomeUnknown(
+                        f"PUT {path} returned an invalid success response; outcome is unknown"
+                    )
+                return result
+        except HaloWriteOutcomeUnknown:
+            raise
+        except (TimeoutError, aiohttp.ClientError, ValueError) as err:
+            raise HaloWriteOutcomeUnknown(
+                f"PUT {path} dispatch or response processing failed; outcome is unknown"
+            ) from err
+        finally:
+            release = getattr(response, "release", None)
+            if callable(release):
+                release()
+
+    async def _async_put_once(
+        self,
+        path: str,
+        payload: dict[str, Any],
+        *,
+        pre_dispatch: Callable[[], None] | None = None,
+    ) -> Any:
+        try:
+            if pre_dispatch is not None:
+                pre_dispatch()
+            return await self._session.put(
+                f"{self._api_base}{path}",
+                json=payload,
+                headers=self._headers(),
+                allow_redirects=False,
+            )
+        except aiohttp.ClientError as err:
+            raise HaloWriteOutcomeUnknown(
+                f"PUT {path} transport failed after dispatch; outcome is unknown: {err!r}"
+            ) from err
 
     async def _async_get_with_retry(self, path: str) -> Any:
         """GET with a short backoff for timeouts, connection errors, 429s, and 5xx."""
