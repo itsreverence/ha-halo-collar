@@ -103,6 +103,75 @@ async def test_refreshes_expired_token_and_fetches_state():
     assert client.token_snapshot["expires_at"] > time.time()
 
 
+class ConcurrentRefreshSession(FakeSession):
+    async def post(self, url, data=None, headers=None):
+        self.posts.append((url, data, headers))
+        await asyncio.sleep(0)
+        return FakeResponse(
+            200,
+            {
+                "access_token": "new-access",
+                "refresh_token": "rotated-refresh",
+                "expires_in": 3600,
+            },
+        )
+
+
+@pytest.mark.asyncio
+async def test_concurrent_expired_reads_share_one_rotating_token_refresh():
+    session = ConcurrentRefreshSession()
+    client = _new_client(session)
+    client._refresh_token = "original-refresh"
+
+    pets, collars = await asyncio.gather(
+        client.async_get("/pet/my"),
+        client.async_get("/collar/my"),
+    )
+
+    assert pets == [{"id": "pet1"}]
+    assert collars[0]["id"] == "collar1"
+    assert len(session.posts) == 1
+    assert client.token_snapshot["refresh_token"] == "rotated-refresh"
+    assert all(headers["Authorization"] == "Bearer new-access" for _, headers in session.gets)
+
+
+class ConcurrentUnauthorizedSession(FakeSession):
+    def __init__(self):
+        super().__init__()
+        self.old_token_gets = 0
+        self.old_token_barrier = asyncio.Event()
+
+    async def get(self, url, headers=None):
+        assert headers is not None
+        self.gets.append((url, headers))
+        if headers["Authorization"] == "Bearer old-access":
+            self.old_token_gets += 1
+            if self.old_token_gets == 2:
+                self.old_token_barrier.set()
+            await self.old_token_barrier.wait()
+            return FakeResponse(401, {"error": "unauthorized"})
+        return await super().get(url, headers=headers)
+
+
+@pytest.mark.asyncio
+async def test_concurrent_401_recovery_refreshes_rejected_token_once():
+    session = ConcurrentUnauthorizedSession()
+    client = _new_client(session)
+    client._access_token = "old-access"
+    client._refresh_token = "original-refresh"
+    client._expires_at = time.time() + 3600
+
+    pets, collars = await asyncio.gather(
+        client.async_get("/pet/my"),
+        client.async_get("/collar/my"),
+    )
+
+    assert pets == [{"id": "pet1"}]
+    assert collars[0]["id"] == "collar1"
+    assert len(session.posts) == 1
+    assert client.token_snapshot["refresh_token"] == "new-refresh"
+
+
 def _new_client(session):
     return HaloApiClient(
         session=session,
@@ -158,6 +227,47 @@ class SequencedSession(FakeSession):
         return result
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("responses", "message"),
+    [
+        (
+            [
+                FakeResponse(200, {"id": "not-a-list"}),
+                FakeResponse(200, []),
+                FakeResponse(200, {}),
+                FakeResponse(200, "2026-07-06T00:32:03Z"),
+            ],
+            "pet state response was not a list",
+        ),
+        (
+            [
+                FakeResponse(200, []),
+                FakeResponse(200, {"id": "not-a-list"}),
+                FakeResponse(200, {}),
+                FakeResponse(200, "2026-07-06T00:32:03Z"),
+            ],
+            "collar state response was not a list",
+        ),
+        (
+            [
+                FakeResponse(200, []),
+                FakeResponse(200, []),
+                FakeResponse(200, ["not-an-object"]),
+                FakeResponse(200, "2026-07-06T00:32:03Z"),
+            ],
+            "subscription state response was not an object",
+        ),
+    ],
+)
+async def test_fetch_state_rejects_malformed_provider_shapes(responses, message):
+    session = SequencedSession(responses)
+    client = _new_client(session)
+
+    with pytest.raises(HaloApiError, match=message):
+        await client.async_fetch_state()
+
+
 @pytest.fixture(autouse=True)
 def _no_backoff(monkeypatch):
     monkeypatch.setattr("custom_components.halo_collar.api.RETRY_BACKOFF_SECONDS", (0.0, 0.0))
@@ -198,6 +308,39 @@ async def test_timeouts_are_wrapped_as_api_errors():
     assert len(session.gets) == 3
 
 
+class StalledGetBodyResponse(FakeResponse):
+    async def json(self, content_type=None):
+        await asyncio.sleep(60)
+
+
+@pytest.mark.asyncio
+async def test_get_timeout_covers_response_body_and_releases_each_attempt(monkeypatch):
+    monkeypatch.setattr(halo_api, "REQUEST_TIMEOUT_SECONDS", 0.01)
+    response = StalledGetBodyResponse(200, {})
+    session = SequencedSession([response])
+    client = _new_client(session)
+
+    with pytest.raises(HaloApiError):
+        await client.async_get("/pet/my")
+
+    assert len(session.gets) == 3
+    assert response.released is True
+
+
+@pytest.mark.asyncio
+async def test_get_releases_transient_responses_before_retrying():
+    first = FakeResponse(503, {"error": "unavailable"})
+    second = FakeResponse(429, {"error": "rate limited"})
+    third = FakeResponse(200, {"ok": True})
+    session = SequencedSession([first, second, third])
+    client = _new_client(session)
+
+    assert await client.async_get("/pet/my") == {"ok": True}
+    assert first.released is True
+    assert second.released is True
+    assert third.released is True
+
+
 @pytest.mark.asyncio
 async def test_persistent_401_after_refresh_raises_auth_error():
     session = SequencedSession([FakeResponse(401, {"error": "unauthorized"})])
@@ -215,6 +358,72 @@ async def test_token_endpoint_outage_is_not_an_auth_error():
     with pytest.raises(HaloApiError) as excinfo:
         await client.async_login("user@example.com", "hunter2", scope="openid")
     assert not isinstance(excinfo.value, HaloAuthError)
+
+
+class StalledTokenBodyResponse(FakeResponse):
+    async def text(self):
+        await asyncio.sleep(60)
+        return ""
+
+
+class StalledTokenBodySession(FakeSession):
+    def __init__(self):
+        super().__init__()
+        self.response = StalledTokenBodyResponse(200, {})
+
+    async def post(self, url, data=None, headers=None):
+        self.posts.append((url, data, headers))
+        return self.response
+
+
+@pytest.mark.asyncio
+async def test_token_timeout_covers_response_body_and_releases_response(monkeypatch):
+    monkeypatch.setattr(halo_api, "REQUEST_TIMEOUT_SECONDS", 0.01)
+    session = StalledTokenBodySession()
+    client = _new_client(session)
+
+    with pytest.raises(HaloApiError):
+        await client.async_login("user@example.com", "hunter2", scope="openid")
+
+    assert session.response.released is True
+
+
+class InvalidJsonTokenResponse(FakeResponse):
+    async def json(self, content_type=None):
+        raise ValueError("invalid json")
+
+
+class InvalidJsonTokenSession(FakeSession):
+    def __init__(self, status=200):
+        super().__init__()
+        self.response = InvalidJsonTokenResponse(status, "not-json")
+
+    async def post(self, url, data=None, headers=None):
+        self.posts.append((url, data, headers))
+        return self.response
+
+
+@pytest.mark.asyncio
+async def test_invalid_token_success_body_is_api_error_and_releases_response():
+    session = InvalidJsonTokenSession()
+    client = _new_client(session)
+
+    with pytest.raises(HaloApiError, match="invalid JSON") as excinfo:
+        await client.async_login("user@example.com", "hunter2", scope="openid")
+
+    assert not isinstance(excinfo.value, HaloAuthError)
+    assert session.response.released is True
+
+
+@pytest.mark.asyncio
+async def test_invalid_token_rejection_body_is_auth_error_and_releases_response():
+    session = InvalidJsonTokenSession(status=400)
+    client = _new_client(session)
+
+    with pytest.raises(HaloAuthError, match="rejected with invalid JSON"):
+        await client.async_login("user@example.com", "wrong", scope="openid")
+
+    assert session.response.released is True
 
 
 @pytest.mark.asyncio

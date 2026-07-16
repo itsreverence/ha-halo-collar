@@ -10,7 +10,7 @@
 Home Assistant config entry (email + stored tokens; password is never persisted)
   -> HaloApiClient
      -> OAuth password grant on first login (auth.halocollar.com/connect/token)
-     -> refresh the access token when needed
+     -> serialize access-token refresh so concurrent reads/writes cannot reuse a rotated refresh token
      -> GET /pet/my, /collar/my, /subscription/my, /system/server-date-time
      -> 30s request timeout; retries 429/5xx/timeouts with short backoff
   -> DataUpdateCoordinator polls every 300 seconds (60-3600s via options flow)
@@ -42,7 +42,7 @@ The repository must not contain real user access/refresh tokens, account credent
 
 ## Safety boundary
 
-The default installation is telemetry-only. The reviewed fence-mode endpoint is available only through two explicit option tiers: enable-only, then full on/off. Entity service actions share one domain-level config-entry transaction lock that survives option-triggered reloads and force non-debounced cloud refreshes before validating the current options, snapshot-wide one-to-one relationship mapping, and telemetry rather than trusting UI availability or cached state. A write is issued at most once with automatic redirects disabled; the API client revalidates current options after any token refresh and at the immediate transport-dispatch boundary, and never replays an ambiguous HTTP/network outcome (including 401). Successful responses, post-dispatch failures, and caller cancellation all retain the transaction lock through read-only reconciliation; the action succeeds only after synchronized reported-state confirmation. Fence-off additionally requires synchronized reported mode and no active walk; rejected or unconfirmed transitions surface an error directing the user to the official app.
+The default installation is telemetry-only. The reviewed fence-mode endpoint is available only through two explicit option tiers: enable-only, then full on/off. Entity service actions share one domain-level config-entry transaction lock that survives option-triggered reloads and force non-debounced cloud refreshes before validating the current options, snapshot-wide one-to-one relationship mapping, and telemetry rather than trusting UI availability or cached state. A write is issued at most once with automatic redirects disabled; after any token refresh and at every immediate transport-dispatch boundary, the client revalidates options, telemetry freshness, disable-specific safety state, and the exact pet/collar IDs captured by preflight. Concurrent token refreshes are serialized and double-checked so a rotated refresh token is used only once. The client never replays an ambiguous HTTP/network outcome (including 401). Successful responses, post-dispatch failures, and caller cancellation all retain the transaction lock through read-only reconciliation; confirmation must still match the original pet/collar IDs, synchronized reported state, and fresh telemetry. Fence-off additionally requires synchronized reported mode and no active walk; rejected or unconfirmed transitions surface an error directing the user to the official app.
 
 Do not add corrections, fence geometry writes, collar wake/control, bind/unbind, account mutation, or proprietary BLE walk-start behavior without a separate explicit review. Cloud pause/stop for an already active walk may be investigated later, but must account for the official app's local walk database and post-processing lifecycle.
 

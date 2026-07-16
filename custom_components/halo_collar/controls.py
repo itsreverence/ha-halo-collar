@@ -51,17 +51,57 @@ def _is_confirmed(
     state_getter: Callable[[], tuple[dict[str, Any] | None, dict[str, Any] | None]],
     *,
     enabled: bool,
+    pet_id: str,
+    collar_id: str,
+    stale_after_getter: Callable[[], float],
 ) -> bool:
-    pet, _collar = state_getter()
+    pet, collar = state_getter()
     return (
         pet is not None
+        and collar is not None
+        and pet.get("id") == pet_id
+        and collar.get("id") == collar_id
+        and is_online(collar, stale_after=stale_after_getter())
         and pet.get("isFencesSynchronized") is True
         and pet_fences_enabled(pet) is enabled
     )
 
 
+def _validate_snapshot(
+    state_getter: Callable[[], tuple[dict[str, Any] | None, dict[str, Any] | None]],
+    *,
+    enabled: bool,
+    stale_after: float,
+    expected_pet_id: str | None = None,
+    expected_collar_id: str | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Fail closed unless the current snapshot is safe for this exact target."""
+    pet, collar = state_getter()
+    if pet is None or collar is None or not pet.get("id") or not collar.get("id"):
+        raise HaloControlError("Halo pet/collar mapping is unavailable")
+    if expected_pet_id is not None and pet.get("id") != expected_pet_id:
+        raise HaloControlError("Halo pet/collar mapping changed before command dispatch")
+    if expected_collar_id is not None and collar.get("id") != expected_collar_id:
+        raise HaloControlError("Halo pet/collar mapping changed before command dispatch")
+    if not is_online(collar, stale_after=stale_after):
+        raise HaloControlError("Halo collar telemetry is stale")
+    if not enabled:
+        block_reason = fence_disable_block_reason(pet, collar, stale_after=stale_after)
+        if block_reason is not None:
+            raise HaloControlError(block_reason)
+    return pet, collar
+
+
 async def _async_dispatch_and_reconcile(
-    *, coordinator, client, pet_id: str, state_getter, enabled: bool, pre_dispatch
+    *,
+    coordinator,
+    client,
+    pet_id: str,
+    collar_id: str,
+    state_getter,
+    enabled: bool,
+    stale_after_getter: Callable[[], float],
+    pre_dispatch,
 ) -> None:
     try:
         await client.async_set_fences_enabled(
@@ -71,7 +111,13 @@ async def _async_dispatch_and_reconcile(
         )
     except HaloWriteOutcomeUnknown as err:
         await coordinator.async_refresh()
-        if coordinator.last_update_success and _is_confirmed(state_getter, enabled=enabled):
+        if coordinator.last_update_success and _is_confirmed(
+            state_getter,
+            enabled=enabled,
+            pet_id=pet_id,
+            collar_id=collar_id,
+            stale_after_getter=stale_after_getter,
+        ):
             return
         raise HaloControlError(
             "Halo write outcome is unknown and could not be reconciled; check the official Halo app"
@@ -82,7 +128,13 @@ async def _async_dispatch_and_reconcile(
         raise HaloControlError(
             "Halo command was sent but state confirmation failed; check the official Halo app"
         )
-    if not _is_confirmed(state_getter, enabled=enabled):
+    if not _is_confirmed(
+        state_getter,
+        enabled=enabled,
+        pet_id=pet_id,
+        collar_id=collar_id,
+        stale_after_getter=stale_after_getter,
+    ):
         raise HaloControlError(
             "Halo command was sent but the collar did not confirm the requested fence state"
         )
@@ -131,27 +183,48 @@ async def async_set_fence_mode(
         if not coordinator.last_update_success:
             raise HaloControlError("Could not refresh Halo state before changing fence mode")
 
-        pet, collar = state_getter()
         stale_after = control_stale_after(entry)
-        if pet is None or collar is None or not pet.get("id"):
-            raise HaloControlError("Halo pet/collar mapping is unavailable")
-        if not is_online(collar, stale_after=stale_after):
-            raise HaloControlError("Halo collar telemetry is stale")
-        if not enabled:
-            block_reason = fence_disable_block_reason(pet, collar, stale_after=stale_after)
-            if block_reason is not None:
-                raise HaloControlError(block_reason)
+        strictest_stale_after = stale_after
 
-        # Options can change while the preflight refresh is in flight. Recheck
-        # immediately before the one and only network write.
+        def current_strictest_stale_after() -> float:
+            nonlocal strictest_stale_after
+            strictest_stale_after = min(
+                strictest_stale_after,
+                control_stale_after(entry),
+            )
+            return strictest_stale_after
+
+        pet, collar = _validate_snapshot(
+            state_getter,
+            enabled=enabled,
+            stale_after=stale_after,
+        )
+        pet_id = pet["id"]
+        collar_id = collar["id"]
+
+        def validate_dispatch_boundary() -> None:
+            _validate_options(entry, enabled=enabled)
+            _validate_snapshot(
+                state_getter,
+                enabled=enabled,
+                stale_after=current_strictest_stale_after(),
+                expected_pet_id=pet_id,
+                expected_collar_id=collar_id,
+            )
+
+        # Options and live state can change while preflight or OAuth refresh is
+        # in flight. Recheck the exact target and all safety gates immediately
+        # before every transport dispatch.
         _validate_options(entry, enabled=enabled)
         await _async_finish_committed_phase(
             _async_dispatch_and_reconcile(
                 coordinator=coordinator,
                 client=client,
-                pet_id=pet["id"],
+                pet_id=pet_id,
+                collar_id=collar_id,
                 state_getter=state_getter,
                 enabled=enabled,
-                pre_dispatch=lambda: _validate_options(entry, enabled=enabled),
+                stale_after_getter=current_strictest_stale_after,
+                pre_dispatch=validate_dispatch_boundary,
             )
         )

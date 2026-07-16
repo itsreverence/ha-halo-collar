@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from homeassistant.components.device_tracker.config_entry import TrackerEntity
+try:
+    from homeassistant.components.device_tracker import TrackerEntity
+except ImportError:  # Home Assistant 2024.11 compatibility
+    from homeassistant.components.device_tracker.config_entry import TrackerEntity
 from homeassistant.components.device_tracker.const import SourceType
-from homeassistant.const import STATE_HOME
 
 from .const import DOMAIN
 from .entity import HaloEntity
@@ -16,7 +18,32 @@ async def async_setup_entry(hass, entry, async_add_entities):
     )
 
 
-class HaloPetTracker(HaloEntity, TrackerEntity):
+if hasattr(TrackerEntity, "in_zones"):
+    from homeassistant.components.zone import ENTITY_ID_HOME
+
+    class _IndoorHomeTrackerMixin:
+        @property
+        def in_zones(self) -> list[str] | None:
+            """Prefer Home zone membership while Halo reports indoor Wi-Fi."""
+            collar = self.collar
+            if collar is not None and indoors_on_wifi(collar):
+                return [ENTITY_ID_HOME]
+            return None
+
+else:
+    from homeassistant.const import STATE_HOME
+
+    class _IndoorHomeTrackerMixin:
+        @property
+        def location_name(self) -> str | None:
+            """Use the legacy location API on older supported HA releases."""
+            collar = self.collar
+            if collar is not None and indoors_on_wifi(collar):
+                return STATE_HOME
+            return None
+
+
+class HaloPetTracker(_IndoorHomeTrackerMixin, HaloEntity, TrackerEntity):
     _attr_name = None
 
     def __init__(self, coordinator, entry, collar) -> None:
@@ -44,15 +71,3 @@ class HaloPetTracker(HaloEntity, TrackerEntity):
         return ((self.collar or {}).get("petInfo", {}).get("telemetry", {}) or {}).get(
             "gpsAccuracyInMeters"
         )
-
-    @property
-    def location_name(self) -> str | None:
-        """Pin the pet to Home while it is indoors on its configured Wi-Fi.
-
-        Indoors the GPS fix is missing or jittery, which would otherwise show the
-        pet as away (or nowhere) while it naps on the couch.
-        """
-        collar = self.collar
-        if collar is not None and indoors_on_wifi(collar):
-            return STATE_HOME
-        return None

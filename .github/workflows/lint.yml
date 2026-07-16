@@ -5,6 +5,45 @@ on:
   pull_request:
 
 jobs:
+  tests:
+    name: tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: astral-sh/setup-uv@v8.3.2
+        with:
+          enable-cache: true
+      - run: uv sync --locked --extra dev
+      - run: uv run pytest -q
+      - run: python -m compileall -q custom_components tests
+
+  minimum-ha-compat:
+    name: minimum HA 2024.11 compatibility
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12.7"
+      - uses: astral-sh/setup-uv@v8.3.2
+        with:
+          enable-cache: true
+      - name: Exercise tracker against Home Assistant 2024.11.3
+        run: >-
+          uv run --isolated --python 3.12.7
+          --with homeassistant==2024.11.3
+          --with josepy==1.14.0
+          --with pytest==8.3.3
+          pytest -q -p no:homeassistant-custom-component
+          tests/test_tracker_compat.py
+
   ruff:
     runs-on: ubuntu-latest
     steps:
