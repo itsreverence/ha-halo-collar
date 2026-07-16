@@ -266,7 +266,11 @@ class HaloApiClient:
         except (TimeoutError, aiohttp.ClientError) as err:
             raise HaloApiError(f"Token request failed: {err!r}") from err
         except ValueError as err:
-            raise HaloAuthError("Token request returned an invalid JSON response") from err
+            if response is not None and 400 <= response.status < 500:
+                raise HaloAuthError(
+                    f"Token request was rejected with invalid JSON: HTTP {response.status}"
+                ) from err
+            raise HaloApiError("Token request returned an invalid JSON response") from err
         finally:
             release = getattr(response, "release", None)
             if callable(release):

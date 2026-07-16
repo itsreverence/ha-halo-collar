@@ -284,9 +284,9 @@ class InvalidJsonTokenResponse(FakeResponse):
 
 
 class InvalidJsonTokenSession(FakeSession):
-    def __init__(self):
+    def __init__(self, status=200):
         super().__init__()
-        self.response = InvalidJsonTokenResponse(200, "not-json")
+        self.response = InvalidJsonTokenResponse(status, "not-json")
 
     async def post(self, url, data=None, headers=None):
         self.posts.append((url, data, headers))
@@ -294,12 +294,24 @@ class InvalidJsonTokenSession(FakeSession):
 
 
 @pytest.mark.asyncio
-async def test_invalid_token_success_body_is_auth_error_and_releases_response():
+async def test_invalid_token_success_body_is_api_error_and_releases_response():
     session = InvalidJsonTokenSession()
     client = _new_client(session)
 
-    with pytest.raises(HaloAuthError, match="invalid JSON"):
+    with pytest.raises(HaloApiError, match="invalid JSON") as excinfo:
         await client.async_login("user@example.com", "hunter2", scope="openid")
+
+    assert not isinstance(excinfo.value, HaloAuthError)
+    assert session.response.released is True
+
+
+@pytest.mark.asyncio
+async def test_invalid_token_rejection_body_is_auth_error_and_releases_response():
+    session = InvalidJsonTokenSession(status=400)
+    client = _new_client(session)
+
+    with pytest.raises(HaloAuthError, match="rejected with invalid JSON"):
+        await client.async_login("user@example.com", "wrong", scope="openid")
 
     assert session.response.released is True
 
