@@ -11,7 +11,7 @@ Home Assistant config entry (email + stored tokens; password is never persisted)
   -> HaloApiClient
      -> OAuth password grant on first login (auth.halocollar.com/connect/token)
      -> serialize access-token refresh so concurrent reads/writes cannot reuse a rotated refresh token
-     -> GET /pet/my, /collar/my, /subscription/my, /system/server-date-time
+     -> GET /pet/my, /collar/my, /subscription/my, /system/server-date-time; optional GET /walk/my?page=1&pageSize=10
      -> 30s request timeout; retries 429/5xx/timeouts with short backoff
   -> DataUpdateCoordinator polls every 300 seconds (60-3600s via options flow)
      -> persists refreshed tokens back to the config entry
@@ -24,7 +24,7 @@ Home Assistant config entry (email + stored tokens; password is never persisted)
 
 ## Platforms
 
-- `sensor`: battery, battery status, remaining battery lifetime, connection type (adapter), Wi-Fi/cellular status and signal, GPS accuracy, location status, safety status, firmware, last/next telemetry timestamps, daily/current-period activity goals and progress, current fence, fence configuration, average connectivity, and one account-level subscription summary.
+- `sensor`: battery, battery status, remaining battery lifetime, connection type (adapter), Wi-Fi/cellular status and signal, GPS accuracy, location status, safety status, firmware, last/next telemetry timestamps, daily/current-period activity goals and progress, current fence, fence configuration, average connectivity, latest matching completed walk among the ten most recent completed account walks (end time/duration/distance), and one account-level subscription summary. Walk history is optional enrichment; unknown means no valid matching record was present in that bounded window, not that no historical walk exists. It never exposes route, location, user, walk-ID, feedback, or correction fields and is not live tracking.
 - `binary_sensor`: connectivity (staleness threshold configurable via options), fence breach, fence mode, fence synchronization, GPS calibration required, compass calibration required, active walk, collar reporting issue, and firmware update availability.
 - `device_tracker`: pet/collar GPS tracker when Halo returns usable coordinates; pins the pet to `home` while the collar reports indoors on its configured Wi-Fi (GPS is unreliable indoors).
 - `event`: fence breach event entity for automation triggers.

@@ -62,6 +62,8 @@ class FakeSession:
             return FakeResponse(200, {"accessLevel": "basic"})
         if url.endswith("/system/server-date-time"):
             return FakeResponse(200, "2026-07-06T00:32:03Z")
+        if url.endswith("/walk/my?page=1&pageSize=10"):
+            return FakeResponse(200, {"results": []})
         return FakeResponse(404, {})
 
     async def put(self, url, json=None, headers=None, allow_redirects=True):
@@ -97,8 +99,12 @@ async def test_refreshes_expired_token_and_fetches_state():
     assert state.pets == [{"id": "pet1"}]
     assert state.collars[0]["id"] == "collar1"
     assert state.subscription["accessLevel"] == "basic"
+    assert state.walks == []
     assert session.posts[0][1]["grant_type"] == "refresh_token"
     assert session.gets[0][1]["Authorization"] == "Bearer new-access"
+    assert [url for url, _headers in session.gets].count(
+        "https://api.example/walk/my?page=1&pageSize=10"
+    ) == 1
     assert client.token_snapshot["refresh_token"] == "new-refresh"
     assert client.token_snapshot["expires_at"] > time.time()
 
@@ -606,3 +612,248 @@ async def test_fence_writes_are_not_retried_on_server_failure():
         await client.async_set_fences_enabled("pet-1", enabled=False)
 
     assert len(session.puts) == 1
+
+
+@pytest.mark.asyncio
+async def test_fetch_state_stores_only_walk_results_after_core_state_validation():
+    session = SequencedSession(
+        [
+            FakeResponse(200, [{"id": "pet-1"}]),
+            FakeResponse(200, [{"id": "collar-1"}]),
+            FakeResponse(200, {}),
+            FakeResponse(200, "2026-07-06T00:32:03Z"),
+            FakeResponse(
+                200,
+                {
+                    "results": [
+                        {
+                            "endedAt": "2026-07-06T10:30:00Z",
+                            "id": "PRIVATE_WALK_ID",
+                            "name": "PRIVATE_NAME_SENTINEL",
+                            "locationName": "PRIVATE_LOCATION_SENTINEL",
+                            "routeImageUrl": "https://private.invalid/route.png",
+                            "user": {"id": "PRIVATE_USER_ID"},
+                            "feedback": {"value": "PRIVATE_FEEDBACK_SENTINEL"},
+                            "correction": {"value": "PRIVATE_CORRECTION_SENTINEL"},
+                            "pets": [
+                                {
+                                    "id": "pet-1",
+                                    "walkedDurationInSeconds": 300,
+                                    "walkedDistanceInMeters": "125.5",
+                                    "nestedUnknown": {"route": "PRIVATE_NESTED_SENTINEL"},
+                                },
+                                {
+                                    "id": "pet-2",
+                                    "walkedDurationInSeconds": True,
+                                    "walkedDistanceInMeters": ["not", "a", "scalar"],
+                                },
+                            ],
+                        }
+                    ],
+                    "page": 1,
+                },
+            ),
+        ]
+    )
+    client = _new_client(session)
+
+    state = await client.async_fetch_state()
+
+    assert state.walks == [
+        {
+            "endedAt": "2026-07-06T10:30:00Z",
+            "pets": [
+                {
+                    "id": "pet-1",
+                    "walkedDurationInSeconds": 300,
+                    "walkedDistanceInMeters": "125.5",
+                },
+                {"id": "pet-2"},
+            ],
+        }
+    ]
+    assert [url for url, _headers in session.gets][-1] == (
+        "https://api.example/walk/my?page=1&pageSize=10"
+    )
+    serialized_walks = str(state.walks).lower()
+    for sentinel in (
+        "private_walk_id",
+        "private_name_sentinel",
+        "private_location_sentinel",
+        "private.invalid/route.png",
+        "private_user_id",
+        "private_feedback_sentinel",
+        "private_correction_sentinel",
+        "private_nested_sentinel",
+    ):
+        assert sentinel not in serialized_walks
+
+    def assert_allowlisted_walk(value):
+        if isinstance(value, list):
+            for item in value:
+                assert_allowlisted_walk(item)
+        elif isinstance(value, dict):
+            assert set(value) <= {
+                "endedAt",
+                "startedAt",
+                "startTrigger",
+                "pets",
+                "id",
+                "walkedDurationInSeconds",
+                "walkedDistanceInMeters",
+            }
+            for item in value.values():
+                assert_allowlisted_walk(item)
+        elif isinstance(value, str):
+            assert "private_" not in value.lower()
+            assert "private.invalid" not in value.lower()
+
+    assert_allowlisted_walk(state.walks)
+
+
+@pytest.mark.asyncio
+async def test_fetch_state_keeps_only_first_ten_raw_walk_results():
+    first_ten_results = [
+        {"id": "walk-0", "endedAt": "2026-07-06T10:00:00Z"},
+        {"id": "walk-1", "endedAt": "2026-07-06T10:01:00Z"},
+        {"id": "walk-2", "endedAt": "2026-07-06T10:02:00Z"},
+        {"id": "walk-3", "endedAt": "2026-07-06T10:03:00Z"},
+        "not-an-object",
+        {"id": "walk-5", "endedAt": "2026-07-06T10:05:00Z"},
+        {"id": "walk-6", "endedAt": "2026-07-06T10:06:00Z"},
+        {"id": "walk-7", "endedAt": "2026-07-06T10:07:00Z"},
+        {"id": "walk-8", "endedAt": "2026-07-06T10:08:00Z"},
+        {"id": "walk-9", "endedAt": "2026-07-06T10:09:00Z"},
+    ]
+    beyond_boundary = {
+        "id": "PRIVATE_NEWER_WALK_SENTINEL",
+        "endedAt": "2026-07-06T12:00:00Z",
+        "pets": [{"id": "pet-1", "walkedDurationInSeconds": 999}],
+    }
+    session = SequencedSession(
+        [
+            FakeResponse(200, [{"id": "pet-1"}]),
+            FakeResponse(200, [{"id": "collar-1"}]),
+            FakeResponse(200, {}),
+            FakeResponse(200, "2026-07-06T00:32:03Z"),
+            FakeResponse(200, {"results": [*first_ten_results, beyond_boundary]}),
+        ]
+    )
+    client = _new_client(session)
+
+    state = await client.async_fetch_state()
+
+    assert [walk.get("endedAt") for walk in state.walks] == [
+        walk["endedAt"] for walk in first_ten_results if isinstance(walk, dict)
+    ]
+    assert len(state.walks) == 9
+    assert beyond_boundary not in state.walks
+    assert "2026-07-06T12:00:00Z" not in [walk.get("endedAt") for walk in state.walks]
+    assert "PRIVATE_NEWER_WALK_SENTINEL" not in str(state.walks)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("walk_payload", "expected_walks"),
+    [
+        ("not-an-object", []),
+        ({"results": "not-a-list"}, []),
+        (
+            {
+                "results": [
+                    {"endedAt": "2026-07-06T10:30:00Z"},
+                    "not-an-object",
+                    42,
+                    {"endedAt": "2026-07-06T11:30:00Z"},
+                ]
+            },
+            [
+                {"endedAt": "2026-07-06T10:30:00Z"},
+                {"endedAt": "2026-07-06T11:30:00Z"},
+            ],
+        ),
+    ],
+)
+async def test_malformed_walk_history_payload_preserves_core_state(walk_payload, expected_walks):
+    session = SequencedSession(
+        [
+            FakeResponse(200, [{"id": "pet-1"}]),
+            FakeResponse(200, [{"id": "collar-1"}]),
+            FakeResponse(200, {"accessLevel": "basic"}),
+            FakeResponse(200, "2026-07-06T00:32:03Z"),
+            FakeResponse(200, walk_payload),
+        ]
+    )
+    client = _new_client(session)
+
+    state = await client.async_fetch_state()
+
+    assert state.pets == [{"id": "pet-1"}]
+    assert state.collars == [{"id": "collar-1"}]
+    assert state.subscription == {"accessLevel": "basic"}
+    assert state.server_time == "2026-07-06T00:32:03Z"
+    assert state.walks == expected_walks
+
+
+@pytest.mark.asyncio
+async def test_walk_history_transient_failure_does_not_hide_core_state(caplog):
+    session = SequencedSession(
+        [
+            FakeResponse(200, [{"id": "pet-1"}]),
+            FakeResponse(200, [{"id": "collar-1"}]),
+            FakeResponse(200, {}),
+            FakeResponse(200, "2026-07-06T00:32:03Z"),
+            FakeResponse(503, {"unavailable": True}),
+        ]
+    )
+    client = _new_client(session)
+
+    state = await client.async_fetch_state()
+
+    assert state.pets == [{"id": "pet-1"}]
+    assert state.walks == []
+    assert len(session.gets) == 7
+    assert "walk history was unavailable" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_walk_history_total_budget_preserves_core_state_and_releases_response(
+    monkeypatch, caplog
+):
+    monkeypatch.setattr(halo_api, "OPTIONAL_WALK_HISTORY_TIMEOUT_SECONDS", 0.01)
+    stalled_response = StalledGetBodyResponse(200, {"private": "PRIVATE_WALK_SENTINEL"})
+    session = SequencedSession(
+        [
+            FakeResponse(200, [{"id": "pet-1"}]),
+            FakeResponse(200, [{"id": "collar-1"}]),
+            FakeResponse(200, {"accessLevel": "basic"}),
+            FakeResponse(200, "2026-07-06T00:32:03Z"),
+            stalled_response,
+        ]
+    )
+    client = _new_client(session)
+
+    state = await client.async_fetch_state()
+
+    assert state.pets == [{"id": "pet-1"}]
+    assert state.walks == []
+    assert stalled_response.released is True
+    assert "walk history was unavailable" in caplog.text
+    assert "PRIVATE_WALK_SENTINEL" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_walk_history_auth_rejection_preserves_auth_failure_semantics():
+    session = SequencedSession(
+        [
+            FakeResponse(200, [{"id": "pet-1"}]),
+            FakeResponse(200, [{"id": "collar-1"}]),
+            FakeResponse(200, {}),
+            FakeResponse(200, "2026-07-06T00:32:03Z"),
+            FakeResponse(401, {"unauthorized": True}),
+        ]
+    )
+    client = _new_client(session)
+
+    with pytest.raises(HaloAuthError):
+        await client.async_fetch_state()

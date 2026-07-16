@@ -18,6 +18,7 @@ from custom_components.halo_collar.helpers import (
     indoors_on_wifi,
     is_online,
     last_telemetry,
+    latest_completed_walk,
     next_expected_telemetry,
     pet_fences_enabled,
     pet_for_collar,
@@ -26,6 +27,110 @@ from custom_components.halo_collar.helpers import (
     reporting_issue,
     sensor_values,
 )
+
+
+def test_latest_completed_walk_selects_newest_matching_safe_summary():
+    walks = [
+        {
+            "startedAt": "2026-07-06T09:00:00Z",
+            "endedAt": "2026-07-06T09:10:00Z",
+            "startTrigger": "scheduled_walk",
+            "pets": [{"id": "pet-other", "walkedDurationInSeconds": 600}],
+        },
+        {
+            "startedAt": "2026-07-06T11:00:00Z",
+            "endedAt": "2026-07-06T11:07:00Z",
+            "startTrigger": "button",
+            "pets": [
+                {
+                    "id": "pet-1",
+                    "walkedDurationInSeconds": 420,
+                    "walkedDistanceInMeters": 125.5,
+                }
+            ],
+        },
+        {
+            "endedAt": "2026-07-06T10:30:00Z",
+            "pets": [{"id": "pet-1", "walkedDurationInSeconds": 120, "walkedDistanceInMeters": 40}],
+        },
+    ]
+
+    assert latest_completed_walk(walks, "pet-1") == {
+        "ended_at": datetime(2026, 7, 6, 11, 7, tzinfo=UTC),
+        "started_at": datetime(2026, 7, 6, 11, 0, tzinfo=UTC),
+        "duration": 420,
+        "distance": 125.5,
+        "start_trigger": "Button",
+    }
+
+
+def test_latest_completed_walk_omits_unknown_start_trigger() -> None:
+    summary = latest_completed_walk(
+        [
+            {
+                "endedAt": "2026-07-06T11:07:00Z",
+                "startTrigger": "PRIVATE_LOCATION_SENTINEL",
+                "pets": [{"id": "pet-1"}],
+            }
+        ],
+        "pet-1",
+    )
+
+    assert summary is not None
+    assert summary["start_trigger"] is None
+
+
+def test_latest_completed_walk_rejects_ambiguous_or_malformed_entries_without_raising():
+    invalid_walks = [
+        {
+            "endedAt": "2026-07-06T11:00:00Z",
+            "pets": [{"id": "pet-1"}, {"id": "pet-1"}],
+        },
+        {"endedAt": "not-a-time", "pets": [{"id": "pet-1"}]},
+        {"endedAt": "2026-07-06T11:00:00Z", "pets": "invalid"},
+    ]
+
+    assert latest_completed_walk(invalid_walks, "pet-1") is None
+
+
+def test_latest_completed_walk_keeps_newest_structural_record_when_optional_fields_are_invalid():
+    summary = latest_completed_walk(
+        [
+            {
+                "startedAt": "2026-07-06T11:30:00Z",
+                "endedAt": "2026-07-06T11:00:00Z",
+                "startTrigger": "PRIVATE_LOCATION_SENTINEL",
+                "pets": [
+                    {
+                        "id": "pet-1",
+                        "walkedDurationInSeconds": True,
+                        "walkedDistanceInMeters": float("inf"),
+                    }
+                ],
+            },
+            {
+                "startedAt": "2026-07-06T10:00:00Z",
+                "endedAt": "2026-07-06T10:15:00Z",
+                "startTrigger": "button",
+                "pets": [
+                    {
+                        "id": "pet-1",
+                        "walkedDurationInSeconds": 900,
+                        "walkedDistanceInMeters": 150,
+                    }
+                ],
+            },
+        ],
+        "pet-1",
+    )
+
+    assert summary == {
+        "ended_at": datetime(2026, 7, 6, 11, 0, tzinfo=UTC),
+        "started_at": None,
+        "duration": None,
+        "distance": None,
+        "start_trigger": None,
+    }
 
 
 def test_pet_mapping_and_control_state_use_live_payload_relationships():

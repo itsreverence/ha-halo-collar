@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
@@ -26,6 +27,7 @@ from custom_components.halo_collar.const import (
     DOMAIN,
 )
 from custom_components.halo_collar.controls import control_lock_for
+from custom_components.halo_collar.diagnostics import async_get_config_entry_diagnostics
 
 
 class FakeHaloClient:
@@ -64,7 +66,7 @@ class FailingHaloClient(FakeHaloClient):
         raise self.error
 
 
-def _state(*, indoors: bool = False):
+def _state(*, indoors: bool = False, walks: list[dict] | None = None):
     timestamp = datetime.now(UTC).replace(microsecond=0).isoformat()
     pet = {
         "id": "pet-1",
@@ -124,6 +126,7 @@ def _state(*, indoors: bool = False):
             "maxGeoFencesCount": 20,
         },
         server_time=timestamp,
+        walks=[] if walks is None else walks,
     )
 
 
@@ -247,6 +250,190 @@ async def test_runtime_insight_sensor_updates_after_coordinator_refresh(hass):
     assert float(outdoor_time.state) == 480
     assert outdoor_time.attributes["goal"] == 960.0
     assert outdoor_time.attributes["progress_percent"] == 50.0
+
+
+async def test_runtime_walk_sensors_are_safe_and_update_after_refresh(hass):
+    walks = [
+        {
+            "startedAt": "2026-07-06T09:00:00Z",
+            "endedAt": "2026-07-06T09:10:00Z",
+            "startTrigger": "scheduled_walk",
+            "pets": [
+                {
+                    "id": "pet-1",
+                    "walkedDurationInSeconds": 600,
+                    "walkedDistanceInMeters": 100,
+                }
+            ],
+        },
+        {
+            "startedAt": "2026-07-06T11:00:00Z",
+            "endedAt": "2026-07-06T11:07:00Z",
+            "startTrigger": "button",
+            "id": "PRIVATE_WALK_ID",
+            "locationName": "PRIVATE_LOCATION_SENTINEL",
+            "routeImageUrl": "https://private.invalid/route.png",
+            "trailImageUrl": "https://private.invalid/trail.png",
+            "user": {"id": "PRIVATE_USER_ID"},
+            "feedback": {"correctionCount": 7},
+            "pets": [
+                {
+                    "id": "pet-1",
+                    "walkedDurationInSeconds": 420,
+                    "walkedDistanceInMeters": 125.5,
+                    "feedback": "PRIVATE_FEEDBACK_SENTINEL",
+                }
+            ],
+        },
+    ]
+    client = FakeHaloClient(_state(walks=walks))
+    entry = _entry({})
+    entry.add_to_hass(hass)
+    await _setup(hass, entry, client)
+    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    collar_id = client.state.collars[0]["id"]
+
+    last_walk = _state_for_unique_id(hass, "sensor", f"{collar_id}_last_walk")
+    assert last_walk.state == "2026-07-06T11:07:00+00:00"
+    assert last_walk.attributes["started_at"] == "2026-07-06T11:00:00+00:00"
+    assert last_walk.attributes["start_trigger"] == "Button"
+    duration = _state_for_unique_id(hass, "sensor", f"{collar_id}_last_walk_duration")
+    assert duration.state == "420"
+    assert duration.attributes["unit_of_measurement"] == "s"
+    distance = _state_for_unique_id(hass, "sensor", f"{collar_id}_last_walk_distance")
+    assert distance.state == "125.5"
+    assert distance.attributes["unit_of_measurement"] == "m"
+
+    forbidden_key_fragments = (
+        "id",
+        "location",
+        "route",
+        "trail",
+        "user",
+        "feedback",
+        "correction",
+    )
+    standard_metadata_keys = {
+        "friendly_name",
+        "device_class",
+        "unit_of_measurement",
+    }
+    forbidden_values = (
+        "private_location_sentinel",
+        "https://private.invalid/route.png",
+        "https://private.invalid/trail.png",
+        "private_walk_id",
+        "private_user_id",
+        "private_feedback_sentinel",
+    )
+
+    def assert_private_data_absent(value):
+        if isinstance(value, dict):
+            for key, nested_value in value.items():
+                if key not in standard_metadata_keys:
+                    assert not any(
+                        fragment in str(key).lower() for fragment in forbidden_key_fragments
+                    )
+                assert_private_data_absent(nested_value)
+        elif isinstance(value, (list, tuple, set)):
+            for nested_value in value:
+                assert_private_data_absent(nested_value)
+
+    for state in (last_walk, duration, distance):
+        assert_private_data_absent(state.attributes)
+        serialized_attributes = json.dumps(state.attributes, default=str).lower()
+        string_attributes = str(state.attributes).lower()
+        forbidden_tokens = (*forbidden_key_fragments, *forbidden_values)
+        assert not any(token in serialized_attributes for token in forbidden_tokens)
+        assert not any(token in string_attributes for token in forbidden_tokens)
+
+    client.state.walks = [
+        {
+            "endedAt": "2026-07-06T12:00:00Z",
+            "startTrigger": "PRIVATE_LOCATION_SENTINEL",
+            "pets": [
+                {
+                    "id": "pet-1",
+                    "walkedDurationInSeconds": 180,
+                    "walkedDistanceInMeters": 50,
+                }
+            ],
+        }
+    ]
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+
+    assert (
+        _state_for_unique_id(hass, "sensor", f"{collar_id}_last_walk").state
+        == "2026-07-06T12:00:00+00:00"
+    )
+    updated_last_walk = _state_for_unique_id(hass, "sensor", f"{collar_id}_last_walk")
+    assert "start_trigger" not in updated_last_walk.attributes
+    serialized_updated_attributes = json.dumps(updated_last_walk.attributes, default=str).lower()
+    assert "private_location_sentinel" not in serialized_updated_attributes
+    assert "private_location_sentinel" not in str(updated_last_walk.attributes).lower()
+    assert _state_for_unique_id(hass, "sensor", f"{collar_id}_last_walk_duration").state == "180"
+    assert _state_for_unique_id(hass, "sensor", f"{collar_id}_last_walk_distance").state == "50.0"
+
+
+async def test_diagnostics_omits_walk_history_and_private_walk_sentinels(hass):
+    walks = [
+        {
+            "id": "PRIVATE_WALK_ID",
+            "endedAt": "2026-07-06T11:07:00Z",
+            "locationName": "PRIVATE_LOCATION_SENTINEL",
+            "routeImageUrl": "https://private.invalid/route.png",
+            "user": {"id": "PRIVATE_USER_ID"},
+            "feedback": {"correction": "PRIVATE_FEEDBACK_SENTINEL"},
+            "pets": [{"id": "pet-1", "nested": {"route": "PRIVATE_NESTED_SENTINEL"}}],
+        }
+    ]
+    client = FakeHaloClient(_state(walks=walks))
+    entry = _entry({})
+    entry.add_to_hass(hass)
+    await _setup(hass, entry, client)
+
+    diagnostics = await async_get_config_entry_diagnostics(hass, entry)
+    serialized = json.dumps(diagnostics, default=str).lower()
+
+    def assert_no_walks_key(value):
+        if isinstance(value, dict):
+            assert "walks" not in value
+            for item in value.values():
+                assert_no_walks_key(item)
+        elif isinstance(value, list):
+            for item in value:
+                assert_no_walks_key(item)
+
+    assert_no_walks_key(diagnostics)
+    for sentinel in (
+        "private_walk_id",
+        "private_location_sentinel",
+        "private.invalid/route.png",
+        "private_user_id",
+        "private_feedback_sentinel",
+        "private_nested_sentinel",
+    ):
+        assert sentinel not in serialized
+
+
+async def test_runtime_walk_sensors_are_unknown_for_empty_or_mismatched_history(hass):
+    client = FakeHaloClient(_state(walks=[]))
+    entry = _entry({})
+    entry.add_to_hass(hass)
+    await _setup(hass, entry, client)
+    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    collar_id = client.state.collars[0]["id"]
+
+    for key in ("last_walk", "last_walk_duration", "last_walk_distance"):
+        assert _state_for_unique_id(hass, "sensor", f"{collar_id}_{key}").state == STATE_UNKNOWN
+
+    client.state.walks = [{"endedAt": "not-a-time", "pets": [{"id": "pet-other"}]}]
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+
+    for key in ("last_walk", "last_walk_duration", "last_walk_distance"):
+        assert _state_for_unique_id(hass, "sensor", f"{collar_id}_{key}").state == STATE_UNKNOWN
 
 
 async def test_runtime_active_walk_entity_is_unknown_when_walk_fields_are_missing(hass):

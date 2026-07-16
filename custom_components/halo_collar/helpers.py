@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, TypedDict
 
 REDACTED = "**REDACTED**"
 
@@ -57,6 +57,18 @@ _STATUS_LABELS = {
     "unknown": "Unknown",
     "noissue": "No issue",
 }
+
+_WALK_START_TRIGGER_LABELS = {
+    "button": "Button",
+}
+
+
+class WalkSummary(TypedDict):
+    ended_at: datetime
+    started_at: datetime | None
+    duration: int | None
+    distance: float | None
+    start_trigger: str | None
 
 
 def redact(data: Any, keys: frozenset[str] = REDACT_KEYS) -> Any:
@@ -178,6 +190,49 @@ def parse_timestamp(value: Any) -> datetime | None:
     except ValueError:
         return None
     return parsed if parsed.tzinfo is not None else None
+
+
+def latest_completed_walk(walks: list[dict[str, Any]], pet_id: Any) -> WalkSummary | None:
+    """Return the newest privacy-safe completed-walk summary for one pet."""
+    if not isinstance(pet_id, str) or not pet_id or not isinstance(walks, list):
+        return None
+
+    newest: WalkSummary | None = None
+    for walk in walks:
+        if not isinstance(walk, dict):
+            continue
+        ended_at = parse_timestamp(walk.get("endedAt"))
+        pets = walk.get("pets")
+        if ended_at is None or not isinstance(pets, list):
+            continue
+        matches = [item for item in pets if isinstance(item, dict) and item.get("id") == pet_id]
+        if len(matches) != 1:
+            continue
+        pet = matches[0]
+
+        started_at = parse_timestamp(walk.get("startedAt"))
+        if started_at is not None and started_at > ended_at:
+            started_at = None
+
+        duration = non_negative_integer(pet.get("walkedDurationInSeconds"))
+
+        distance = non_negative_number(pet.get("walkedDistanceInMeters"))
+
+        raw_trigger = walk.get("startTrigger")
+        trigger = (
+            _WALK_START_TRIGGER_LABELS.get(raw_trigger) if isinstance(raw_trigger, str) else None
+        )
+
+        summary: WalkSummary = {
+            "ended_at": ended_at,
+            "started_at": started_at,
+            "duration": duration,
+            "distance": distance,
+            "start_trigger": trigger,
+        }
+        if newest is None or ended_at > newest["ended_at"]:
+            newest = summary
+    return newest
 
 
 def last_telemetry(collar: dict[str, Any]) -> datetime | None:
