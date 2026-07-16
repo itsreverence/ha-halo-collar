@@ -72,6 +72,9 @@
       "fence_configuration": {"name": "Fence configuration"},
       "average_connectivity": {"name": "Average connectivity"},
       "next_expected_telemetry": {"name": "Next expected telemetry"},
+      "last_walk": {"name": "Latest walk in recent history"},
+      "last_walk_duration": {"name": "Recent walk duration"},
+      "last_walk_distance": {"name": "Recent walk distance"},
       "subscription": {"name": "Subscription"}
     },
     "binary_sensor": {

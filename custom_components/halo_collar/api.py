@@ -4,7 +4,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
@@ -15,12 +15,46 @@ if TYPE_CHECKING:
 
 TOKEN_REFRESH_SKEW_SECONDS = 60
 REQUEST_TIMEOUT_SECONDS = 30
+OPTIONAL_WALK_HISTORY_TIMEOUT_SECONDS = 5
 # Transient statuses worth retrying; anything else surfaces immediately.
 RETRYABLE_STATUS = (429, 500, 502, 503, 504)
 # Delays between attempts; total attempts = len(RETRY_BACKOFF_SECONDS) + 1.
 RETRY_BACKOFF_SECONDS = (1.0, 3.0)
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _safe_walk_number_or_string(value: Any) -> int | float | str | None:
+    """Keep only scalar walk metrics the fail-soft extractors can normalize."""
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        return None
+    return value
+
+
+def _sanitize_walk_record(raw_walk: dict[str, Any]) -> dict[str, Any]:
+    """Copy only the privacy-safe walk fields needed by the entity extractors."""
+    walk: dict[str, Any] = {}
+    for key in ("endedAt", "startedAt"):
+        if isinstance(value := raw_walk.get(key), str):
+            walk[key] = value
+    if raw_walk.get("startTrigger") == "button":
+        walk["startTrigger"] = "button"
+
+    raw_pets = raw_walk.get("pets")
+    if isinstance(raw_pets, list):
+        pets: list[dict[str, Any]] = []
+        for raw_pet in raw_pets:
+            if not isinstance(raw_pet, dict):
+                continue
+            pet: dict[str, Any] = {}
+            if isinstance(pet_id := raw_pet.get("id"), str):
+                pet["id"] = pet_id
+            for key in ("walkedDurationInSeconds", "walkedDistanceInMeters"):
+                if (value := _safe_walk_number_or_string(raw_pet.get(key))) is not None:
+                    pet[key] = value
+            pets.append(pet)
+        walk["pets"] = pets
+    return walk
 
 
 class HaloApiError(Exception):
@@ -41,6 +75,7 @@ class HaloState:
     collars: list[dict[str, Any]]
     subscription: dict[str, Any]
     server_time: str | None = None
+    walks: list[dict[str, Any]] = field(default_factory=list)
 
 
 class HaloApiClient:
@@ -85,11 +120,28 @@ class HaloApiClient:
             raise HaloApiError("Halo collar state response was not a list")
         if not isinstance(subscription, dict):
             raise HaloApiError("Halo subscription state response was not an object")
+
+        walks: list[dict[str, Any]] = []
+        try:
+            async with asyncio.timeout(OPTIONAL_WALK_HISTORY_TIMEOUT_SECONDS):
+                walk_history = await self.async_get("/walk/my?page=1&pageSize=10")
+        except HaloAuthError:
+            raise
+        except (TimeoutError, HaloApiError):
+            _LOGGER.warning("Halo walk history was unavailable; continuing without walk history")
+        else:
+            if isinstance(walk_history, dict) and isinstance(walk_history.get("results"), list):
+                walks = [
+                    _sanitize_walk_record(walk)
+                    for walk in walk_history["results"][:10]
+                    if isinstance(walk, dict)
+                ]
         return HaloState(
             pets=pets,
             collars=collars,
             subscription=subscription,
             server_time=server_time if isinstance(server_time, str) else None,
+            walks=walks,
         )
 
     async def async_get_many(self, *paths: str) -> list[Any]:

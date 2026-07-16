@@ -17,6 +17,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .api import HaloState
 from .const import DOMAIN
 from .entity import HaloEntity
+from .helpers import WalkSummary as _WalkSummary
 from .helpers import activity_value as _activity_value
 from .helpers import average_connectivity as _average_connectivity
 from .helpers import count_goal_progress_attributes as _count_goal_progress_attributes
@@ -25,6 +26,7 @@ from .helpers import current_fence_name as _current_fence_name
 from .helpers import fence_configuration_status as _fence_configuration_status
 from .helpers import goal_progress_attributes as _goal_progress_attributes
 from .helpers import last_telemetry as _last_telemetry
+from .helpers import latest_completed_walk as _latest_completed_walk
 from .helpers import nested as _nested
 from .helpers import next_expected_telemetry as _next_expected_telemetry
 from .helpers import pet_safety_status as _pet_safety_status
@@ -198,6 +200,11 @@ async def async_setup_entry(hass, entry, async_add_entities):
         for collar in coordinator.data.collars
         for description in SENSORS
     ]
+    entities.extend(
+        HaloWalkSensor(coordinator, entry, collar, description)
+        for collar in coordinator.data.collars
+        for description in WALK_SENSORS
+    )
     entities.append(HaloSubscriptionSensor(coordinator, entry))
     async_add_entities(entities)
 
@@ -222,6 +229,73 @@ class HaloSensor(HaloEntity, SensorEntity):
             if collar is not None and attributes_fn is not None
             else {}
         )
+
+    def _handle_coordinator_update(self) -> None:
+        self._update_values()
+        super()._handle_coordinator_update()
+
+
+WALK_SENSORS = (
+    SensorEntityDescription(
+        key="last_walk",
+        translation_key="last_walk",
+        device_class=SensorDeviceClass.TIMESTAMP,
+    ),
+    SensorEntityDescription(
+        key="last_walk_duration",
+        translation_key="last_walk_duration",
+        device_class=SensorDeviceClass.DURATION,
+        native_unit_of_measurement=UnitOfTime.SECONDS,
+    ),
+    SensorEntityDescription(
+        key="last_walk_distance",
+        translation_key="last_walk_distance",
+        device_class=SensorDeviceClass.DISTANCE,
+        native_unit_of_measurement=UnitOfLength.METERS,
+    ),
+)
+
+
+class HaloWalkSensor(  # pyright: ignore[reportIncompatibleVariableOverride]
+    HaloEntity, SensorEntity
+):
+    """Expose a privacy-safe summary of the latest completed cloud walk."""
+
+    entity_description: SensorEntityDescription
+
+    def __init__(self, coordinator, entry, collar, description: SensorEntityDescription) -> None:
+        super().__init__(coordinator, entry, collar)
+        self.entity_description = description  # pyright: ignore[reportIncompatibleVariableOverride]
+        self._attr_unique_id = f"{self._collar_id}_{description.key}"
+        self._update_values()
+
+    def _walk_summary(self) -> _WalkSummary | None:
+        pet = self.pet
+        pet_id = pet.get("id") if pet is not None else None
+        state = cast(HaloState, self.coordinator.data)
+        return _latest_completed_walk(state.walks, pet_id)
+
+    def _update_values(self) -> None:
+        summary = self._walk_summary()
+        if summary is None:
+            self._attr_native_value = None
+            self._attr_extra_state_attributes = {}
+            return
+        key = self.entity_description.key
+        if key == "last_walk":
+            self._attr_native_value = summary["ended_at"]
+            attributes: dict[str, str] = {}
+            if summary["started_at"] is not None:
+                attributes["started_at"] = summary["started_at"].isoformat()
+            if summary["start_trigger"] is not None:
+                attributes["start_trigger"] = summary["start_trigger"]
+            self._attr_extra_state_attributes = attributes
+        elif key == "last_walk_duration":
+            self._attr_native_value = summary["duration"]
+            self._attr_extra_state_attributes = {}
+        else:
+            self._attr_native_value = summary["distance"]
+            self._attr_extra_state_attributes = {}
 
     def _handle_coordinator_update(self) -> None:
         self._update_values()
