@@ -84,6 +84,19 @@ class RevokingAtDispatchClient(FakeClient):
         return {"ok": True}
 
 
+class MutatingAtDispatchClient(FakeClient):
+    def __init__(self, mutate):
+        super().__init__()
+        self.mutate = mutate
+
+    async def async_set_fences_enabled(self, pet_id, *, enabled, pre_dispatch=None):
+        self.mutate()
+        if pre_dispatch is not None:
+            pre_dispatch()
+        self.writes.append((pet_id, enabled))
+        return {"ok": True}
+
+
 class UnknownOutcomeClient(FakeClient):
     async def async_set_fences_enabled(self, pet_id, *, enabled, pre_dispatch=None):
         if pre_dispatch is not None:
@@ -138,6 +151,16 @@ def test_control_lock_is_shared_by_all_entities_and_survives_reload():
 
     remove_control_lock(domain_data, "entry-1")
     assert control_lock_for(domain_data, "entry-1") is not old_setup_lock
+
+
+def test_control_lock_survives_exact_entry_payload_pop_used_by_unload():
+    domain_data = {"entry-1": {"coordinator": object()}}
+    old_setup_lock = control_lock_for(domain_data, "entry-1")
+
+    domain_data.pop("entry-1")
+    domain_data["entry-1"] = {"coordinator": object()}
+
+    assert control_lock_for(domain_data, "entry-1") is old_setup_lock
 
 
 @pytest.mark.asyncio
@@ -236,6 +259,39 @@ async def test_option_revocation_at_actual_dispatch_boundary_blocks_put():
 
     with pytest.raises(HaloControlError, match="not allowed"):
         await _execute(coordinator, client, entry, enabled=False)
+
+    assert coordinator.refreshes == 1
+    assert client.writes == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("enabled", "replacement", "message"),
+    [
+        (True, (_pet() | {"id": "pet-2"}, _collar()), "mapping changed"),
+        (True, (_pet(), _collar() | {"id": "collar-2"}), "mapping changed"),
+        (False, (_pet(walk={"id": "walk-2"}), _collar()), "active walk"),
+        (False, (_pet(synchronized=False), _collar()), "synchronized"),
+        (False, (_pet(), _collar(fresh=False)), "stale"),
+    ],
+)
+async def test_dispatch_boundary_revalidates_identity_and_disable_safety(
+    enabled, replacement, message
+):
+    coordinator = FakeCoordinator([(_pet(), _collar())])
+
+    def mutate():
+        coordinator.states[coordinator.index] = replacement
+
+    client = MutatingAtDispatchClient(mutate)
+
+    with pytest.raises(HaloControlError, match=message):
+        await _execute(
+            coordinator,
+            client,
+            _entry(allow_disable=True),
+            enabled=enabled,
+        )
 
     assert coordinator.refreshes == 1
     assert client.writes == []
@@ -347,6 +403,19 @@ async def test_unconfirmed_result_reports_ambiguous_outcome_without_second_write
 
     assert coordinator.refreshes == 2
     assert client.writes == [("pet-1", False)]
+
+
+@pytest.mark.asyncio
+async def test_post_write_confirmation_rejects_changed_target_identity():
+    changed_pet = _pet(fences_on=True) | {"id": "pet-2"}
+    coordinator = FakeCoordinator([(_pet(fences_on=False), _collar()), (changed_pet, _collar())])
+    client = FakeClient()
+
+    with pytest.raises(HaloControlError, match="did not confirm"):
+        await _execute(coordinator, client, _entry(), enabled=True)
+
+    assert coordinator.refreshes == 2
+    assert client.writes == [("pet-1", True)]
 
 
 @pytest.mark.asyncio

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from homeassistant.components.device_tracker.config_entry import TrackerEntity
+from homeassistant.components.device_tracker import TrackerEntity
 from homeassistant.components.device_tracker.const import SourceType
-from homeassistant.const import STATE_HOME
+from homeassistant.components.zone import ENTITY_ID_HOME
 
 from .const import DOMAIN
 from .entity import HaloEntity
@@ -46,13 +46,13 @@ class HaloPetTracker(HaloEntity, TrackerEntity):
         )
 
     @property
-    def location_name(self) -> str | None:
+    def in_zones(self) -> list[str] | None:
         """Pin the pet to Home while it is indoors on its configured Wi-Fi.
 
-        Indoors the GPS fix is missing or jittery, which would otherwise show the
-        pet as away (or nowhere) while it naps on the couch.
+        Indoors the GPS fix is missing or jittery, so zone membership takes
+        precedence over coordinates without using HA's deprecated location name.
         """
         collar = self.collar
         if collar is not None and indoors_on_wifi(collar):
-            return STATE_HOME
+            return [ENTITY_ID_HOME]
         return None

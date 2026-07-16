@@ -64,6 +64,7 @@ class HaloApiClient:
         self._client_secret = client_secret
         self._api_base = api_base.rstrip("/")
         self._auth_base = auth_base.rstrip("/")
+        self._refresh_lock = asyncio.Lock()
 
     @property
     def token_snapshot(self) -> dict[str, Any]:
@@ -78,10 +79,16 @@ class HaloApiClient:
         pets, collars, subscription, server_time = await self.async_get_many(
             "/pet/my", "/collar/my", "/subscription/my", "/system/server-date-time"
         )
+        if not isinstance(pets, list):
+            raise HaloApiError("Halo pet state response was not a list")
+        if not isinstance(collars, list):
+            raise HaloApiError("Halo collar state response was not a list")
+        if not isinstance(subscription, dict):
+            raise HaloApiError("Halo subscription state response was not an object")
         return HaloState(
-            pets=list(pets or []),
-            collars=list(collars or []),
-            subscription=dict(subscription or {}),
+            pets=pets,
+            collars=collars,
+            subscription=subscription,
             server_time=server_time if isinstance(server_time, str) else None,
         )
 
@@ -90,10 +97,11 @@ class HaloApiClient:
 
     async def async_get(self, path: str) -> Any:
         await self._async_refresh_if_needed()
+        request_access_token = self._access_token
         status, payload = await self._async_get_with_retry(path)
         if status == 401:
             # Access token rejected despite looking valid; refresh once and retry.
-            await self.async_refresh_token()
+            await self.async_refresh_token(rejected_access_token=request_access_token)
             status, payload = await self._async_get_with_retry(path)
             if status == 401:
                 raise HaloAuthError(f"GET {path} unauthorized even after a token refresh")
@@ -215,10 +223,24 @@ class HaloApiClient:
         raise AssertionError(f"unreachable after GET failure: {last_error!r}")
 
     async def _async_refresh_if_needed(self) -> None:
-        if not self._access_token or time.time() >= self._expires_at - TOKEN_REFRESH_SKEW_SECONDS:
-            await self.async_refresh_token()
+        if self._token_needs_refresh():
+            async with self._refresh_lock:
+                if self._token_needs_refresh():
+                    await self._async_refresh_token_unlocked()
 
-    async def async_refresh_token(self) -> None:
+    def _token_needs_refresh(self) -> bool:
+        return (
+            not self._access_token or time.time() >= self._expires_at - TOKEN_REFRESH_SKEW_SECONDS
+        )
+
+    async def async_refresh_token(self, *, rejected_access_token: str | None = None) -> None:
+        """Refresh once, deduplicating concurrent expiry and 401 recovery paths."""
+        async with self._refresh_lock:
+            if rejected_access_token is not None and self._access_token != rejected_access_token:
+                return
+            await self._async_refresh_token_unlocked()
+
+    async def _async_refresh_token_unlocked(self) -> None:
         if not self._client_secret:
             raise HaloApiError("Halo OAuth client secret is required to refresh tokens")
         await self._async_token_request(

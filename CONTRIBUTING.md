@@ -21,7 +21,7 @@ uv run ruff format --check .
 python -m compileall custom_components tests
 ```
 
-Unit tests exercise the API client, guarded control transactions, and telemetry extractors without requiring a Home Assistant installation. The locked test suite runs in GitHub Actions on Python 3.11, 3.13, and 3.14; Hassfest and HACS validation run there as separate jobs.
+Unit tests exercise the API client, guarded control transactions, and telemetry extractors without requiring Home Assistant. On Python 3.14.2+, the pinned `pytest-homeassistant-custom-component` harness also loads Home Assistant 2026.7.2 and verifies config-entry setup/failure behavior, every platform, option-driven control lifecycle, token persistence, and lock identity across real unload/reload operations. GitHub Actions runs the locked suite on Python 3.11, 3.13, and 3.14; Hassfest and HACS validation run as separate jobs.
 
 ## Testing in Home Assistant
 
@@ -45,6 +45,6 @@ Keep changes narrowly scoped and explain:
 - tests added or updated;
 - the commands you ran.
 
-Halo Collar is read-only by design. Do not add corrections, fence modification, mode changes, collar control, or bind/unbind endpoints without a separate explicit safety review.
+Halo Collar is telemetry-first, and all writes are opt-in. Do not add corrections, fence geometry changes, collar commands, walk lifecycle actions, or bind/unbind endpoints without a separate explicit safety review and fail-closed tests.
 
 Maintainers use [docs/RELEASING.md](docs/RELEASING.md) for releases.

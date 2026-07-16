@@ -152,10 +152,14 @@ def has_active_walk(pet: dict[str, Any] | None, collar: dict[str, Any] | None) -
     )
 
 
-def parse_timestamp(value: str | None) -> datetime | None:
-    if not value:
+def parse_timestamp(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value:
         return None
-    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else None
 
 
 def last_telemetry(collar: dict[str, Any]) -> datetime | None:

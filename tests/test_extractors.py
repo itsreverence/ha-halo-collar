@@ -117,6 +117,24 @@ def test_fence_disable_preflight_requires_fresh_synchronized_reported_state():
     )
 
 
+def test_malformed_telemetry_timestamps_fail_closed_without_exceptions():
+    for value in (12345, {}, [], "not-a-date", "2026-07-15T12:00:00"):
+        collar = {"telemetry": {"manifest": {"timestamp": value}}}
+        assert last_telemetry(collar) is None
+        assert is_online(collar) is False
+        assert (
+            fence_disable_block_reason(
+                {
+                    "isFencesSynchronized": True,
+                    "telemetry": {"mode": {"fencesOn": True}},
+                },
+                collar,
+                stale_after=900,
+            )
+            == "Halo collar telemetry is stale"
+        )
+
+
 def test_sensor_extractors_cover_live_payload_shape():
     collar = {
         "firmware": {"formattedVersion": "03.06.64"},
