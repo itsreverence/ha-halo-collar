@@ -54,6 +54,7 @@ _STATUS_LABELS = {
     "indoors": "Indoors",
     "outdoors": "Outdoors",
     "uptodate": "Up to date",
+    "allapplied": "All applied",
     "unknown": "Unknown",
     "noissue": "No issue",
 }
