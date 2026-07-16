@@ -21,7 +21,7 @@ uv run ruff format --check .
 python -m compileall custom_components tests
 ```
 
-Unit tests exercise the API client, guarded control transactions, and telemetry extractors without requiring Home Assistant. On Python 3.14.2+, the pinned `pytest-homeassistant-custom-component` harness also loads Home Assistant 2026.7.2 and verifies config-entry setup/failure behavior, every platform, option-driven control lifecycle, token persistence, and lock identity across real unload/reload operations. GitHub Actions runs the locked suite on Python 3.11, 3.13, and 3.14; Hassfest and HACS validation run as separate jobs.
+Unit tests exercise the API client, guarded control transactions, and telemetry extractors without requiring Home Assistant. On Python 3.14.2+, the pinned `pytest-homeassistant-custom-component` harness also loads Home Assistant 2026.7.2 and verifies config-entry setup/failure behavior, every platform, option-driven control lifecycle, token persistence, and lock identity across real unload/reload operations. A separate isolated compatibility lane loads Home Assistant 2024.11.3 on Python 3.12.7 and verifies the tracker import plus indoor-home behavior against the documented minimum API. GitHub Actions runs the locked suite on Python 3.11, 3.13, and 3.14; Hassfest and HACS validation run as separate jobs.
 
 ## Testing in Home Assistant
 

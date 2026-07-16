@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import sys
+from importlib.util import find_spec
 
 import pytest
 
-if sys.version_info >= (3, 14, 2):
+if find_spec("pytest_homeassistant_custom_component") is not None:
     pytest_plugins = "pytest_homeassistant_custom_component"
 
     @pytest.fixture(autouse=True)

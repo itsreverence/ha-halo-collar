@@ -1,36 +1,30 @@
 from __future__ import annotations
 
-import sys
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
-if sys.version_info < (3, 14, 2):
-    pytest.skip(
-        "Home Assistant 2026.7.2 requires Python 3.14.2+",
-        allow_module_level=True,
-    )
+pytest.importorskip("homeassistant")
 
-if sys.version_info >= (3, 14, 2):
-    from homeassistant.config_entries import ConfigEntryState
-    from homeassistant.const import STATE_ON, STATE_UNAVAILABLE
-    from pytest_homeassistant_custom_component.common import MockConfigEntry
+from homeassistant.config_entries import ConfigEntryState
+from homeassistant.const import STATE_ON, STATE_UNAVAILABLE
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-    from custom_components.halo_collar.api import HaloApiError, HaloAuthError, HaloState
-    from custom_components.halo_collar.const import (
-        CONF_ACCESS_TOKEN,
-        CONF_ALLOW_FENCE_DISABLE,
-        CONF_CLIENT_ID,
-        CONF_CLIENT_SECRET,
-        CONF_ENABLE_FENCE_CONTROLS,
-        CONF_EXPIRES_AT,
-        CONF_REFRESH_TOKEN,
-        CONF_SCAN_INTERVAL,
-        CONF_STALE_AFTER,
-        DOMAIN,
-    )
-    from custom_components.halo_collar.controls import control_lock_for
+from custom_components.halo_collar.api import HaloApiError, HaloAuthError, HaloState
+from custom_components.halo_collar.const import (
+    CONF_ACCESS_TOKEN,
+    CONF_ALLOW_FENCE_DISABLE,
+    CONF_CLIENT_ID,
+    CONF_CLIENT_SECRET,
+    CONF_ENABLE_FENCE_CONTROLS,
+    CONF_EXPIRES_AT,
+    CONF_REFRESH_TOKEN,
+    CONF_SCAN_INTERVAL,
+    CONF_STALE_AFTER,
+    DOMAIN,
+)
+from custom_components.halo_collar.controls import control_lock_for
 
 
 class FakeHaloClient:
