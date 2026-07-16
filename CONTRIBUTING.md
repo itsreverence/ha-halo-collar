@@ -21,7 +21,7 @@ uv run ruff format --check .
 python -m compileall custom_components tests
 ```
 
-Unit tests exercise the API client and telemetry extractors without requiring a Home Assistant installation. Hassfest and HACS validation run in GitHub Actions.
+Unit tests exercise the API client, guarded control transactions, and telemetry extractors without requiring a Home Assistant installation. The locked test suite runs in GitHub Actions on Python 3.11, 3.13, and 3.14; Hassfest and HACS validation run there as separate jobs.
 
 ## Testing in Home Assistant
 
