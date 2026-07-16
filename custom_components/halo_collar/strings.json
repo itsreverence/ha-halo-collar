@@ -63,7 +63,16 @@
       "location_status": {"name": "Location status"},
       "safety_status": {"name": "Safety status"},
       "firmware": {"name": "Firmware"},
-      "last_telemetry": {"name": "Last telemetry"}
+      "last_telemetry": {"name": "Last telemetry"},
+      "activity_duration": {"name": "Activity duration"},
+      "outdoor_time": {"name": "Outdoor time"},
+      "traveled_distance": {"name": "Distance traveled"},
+      "walks_today": {"name": "Walks today"},
+      "current_fence": {"name": "Current fence"},
+      "fence_configuration": {"name": "Fence configuration"},
+      "average_connectivity": {"name": "Average connectivity"},
+      "next_expected_telemetry": {"name": "Next expected telemetry"},
+      "subscription": {"name": "Subscription"}
     },
     "binary_sensor": {
       "online": {"name": "Connectivity"},
@@ -71,7 +80,10 @@
       "gps_calibration_required": {"name": "GPS calibration required"},
       "compass_calibration_required": {"name": "Compass calibration required"},
       "fences_enabled": {"name": "Fences enabled"},
-      "fences_synchronized": {"name": "Fence state synchronized"}
+      "fences_synchronized": {"name": "Fence state synchronized"},
+      "active_walk": {"name": "Active walk"},
+      "collar_reporting_issue": {"name": "Collar reporting issue"},
+      "firmware_update_available": {"name": "Firmware update available"}
     },
     "button": {
       "enable_fences": {"name": "Enable fences"}

@@ -2,15 +2,31 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
-from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorEntityDescription
-from homeassistant.const import PERCENTAGE, UnitOfTime
+from homeassistant.components.sensor import (
+    SensorDeviceClass,
+    SensorEntity,
+    SensorEntityDescription,
+    SensorStateClass,
+)
+from homeassistant.const import PERCENTAGE, EntityCategory, UnitOfLength, UnitOfTime
+from homeassistant.helpers.entity import Entity
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from .api import HaloState
 from .const import DOMAIN
 from .entity import HaloEntity
+from .helpers import activity_value as _activity_value
+from .helpers import average_connectivity as _average_connectivity
+from .helpers import count_goal_progress_attributes as _count_goal_progress_attributes
+from .helpers import count_value as _count_value
+from .helpers import current_fence_name as _current_fence_name
+from .helpers import fence_configuration_status as _fence_configuration_status
+from .helpers import goal_progress_attributes as _goal_progress_attributes
 from .helpers import last_telemetry as _last_telemetry
 from .helpers import nested as _nested
+from .helpers import next_expected_telemetry as _next_expected_telemetry
 from .helpers import pet_safety_status as _pet_safety_status
 from .helpers import pretty_status as _pretty_status
 from .helpers import seconds_to_hours as _seconds_to_hours
@@ -20,6 +36,7 @@ from .helpers import telemetry as _telemetry
 @dataclass(frozen=True, kw_only=True)
 class HaloSensorDescription(SensorEntityDescription):
     value_fn: Callable[[dict[str, Any], dict[str, Any] | None], Any]
+    attributes_fn: Callable[[dict[str, Any], dict[str, Any] | None], dict[str, Any]] | None = None
 
 
 SENSORS = (
@@ -76,7 +93,7 @@ SENSORS = (
     HaloSensorDescription(
         key="gps_accuracy",
         translation_key="gps_accuracy",
-        native_unit_of_measurement="m",
+        native_unit_of_measurement=UnitOfLength.METERS,
         suggested_display_precision=1,
         value_fn=lambda c, _p: _nested(c, "petInfo", "telemetry", "gpsAccuracyInMeters"),
     ),
@@ -103,16 +120,85 @@ SENSORS = (
         device_class=SensorDeviceClass.TIMESTAMP,
         value_fn=lambda c, _p: _last_telemetry(c),
     ),
+    HaloSensorDescription(
+        key="activity_duration",
+        translation_key="activity_duration",
+        device_class=SensorDeviceClass.DURATION,
+        native_unit_of_measurement=UnitOfTime.SECONDS,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda _c, p: _activity_value(p, "activityDurationInSec"),
+        attributes_fn=lambda _c, p: _goal_progress_attributes(
+            p, "activityDurationInSec", "activityDurationGoalInSec"
+        ),
+    ),
+    HaloSensorDescription(
+        key="outdoor_time",
+        translation_key="outdoor_time",
+        device_class=SensorDeviceClass.DURATION,
+        native_unit_of_measurement=UnitOfTime.SECONDS,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda _c, p: _activity_value(p, "outdoorTimeInSec"),
+        attributes_fn=lambda _c, p: _goal_progress_attributes(
+            p, "outdoorTimeInSec", "outdoorTimeGoalInSec"
+        ),
+    ),
+    HaloSensorDescription(
+        key="traveled_distance",
+        translation_key="traveled_distance",
+        device_class=SensorDeviceClass.DISTANCE,
+        native_unit_of_measurement=UnitOfLength.METERS,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=1,
+        value_fn=lambda _c, p: _activity_value(p, "traveledDistance"),
+        attributes_fn=lambda _c, p: _goal_progress_attributes(
+            p, "traveledDistance", "traveledDistanceGoal"
+        ),
+    ),
+    HaloSensorDescription(
+        key="walks_today",
+        translation_key="walks_today",
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda _c, p: _count_value(p, "walksCount"),
+        attributes_fn=lambda _c, p: _count_goal_progress_attributes(
+            p, "walksCount", "walksCountGoal"
+        ),
+    ),
+    HaloSensorDescription(
+        key="current_fence",
+        translation_key="current_fence",
+        value_fn=lambda _c, p: _current_fence_name(p),
+    ),
+    HaloSensorDescription(
+        key="fence_configuration",
+        translation_key="fence_configuration",
+        value_fn=lambda _c, p: _fence_configuration_status(p),
+    ),
+    HaloSensorDescription(
+        key="average_connectivity",
+        translation_key="average_connectivity",
+        native_unit_of_measurement=PERCENTAGE,
+        suggested_display_precision=1,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda c, _p: _average_connectivity(c),
+    ),
+    HaloSensorDescription(
+        key="next_expected_telemetry",
+        translation_key="next_expected_telemetry",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda c, _p: _next_expected_telemetry(c),
+    ),
 )
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
     coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
-    entities = [
+    entities: list[Entity] = [
         HaloSensor(coordinator, entry, collar, description)
         for collar in coordinator.data.collars
         for description in SENSORS
     ]
+    entities.append(HaloSubscriptionSensor(coordinator, entry))
     async_add_entities(entities)
 
 
@@ -123,10 +209,65 @@ class HaloSensor(HaloEntity, SensorEntity):
         super().__init__(coordinator, entry, collar)
         self.entity_description = description
         self._attr_unique_id = f"{self._collar_id}_{description.key}"
+        self._update_values()
+
+    def _update_values(self) -> None:
+        collar = self.collar
+        attributes_fn = self.entity_description.attributes_fn
+        self._attr_native_value = (
+            self.entity_description.value_fn(collar, self.pet) if collar is not None else None
+        )
+        self._attr_extra_state_attributes = (
+            attributes_fn(collar, self.pet)
+            if collar is not None and attributes_fn is not None
+            else {}
+        )
+
+    def _handle_coordinator_update(self) -> None:
+        self._update_values()
+        super()._handle_coordinator_update()
+
+
+class HaloSubscriptionSensor(  # pyright: ignore[reportIncompatibleVariableOverride]
+    CoordinatorEntity, SensorEntity
+):
+    _attr_has_entity_name = True
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_translation_key = "subscription"
+
+    def __init__(self, coordinator, entry) -> None:
+        super().__init__(coordinator)
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_subscription"
+        self._update_values()
 
     @property
-    def native_value(self):
-        collar = self.collar
-        if collar is None:
-            return None
-        return self.entity_description.value_fn(collar, self.pet)
+    def suggested_object_id(self) -> str:
+        """Avoid a generic account-level ``sensor.subscription`` entity ID."""
+        return "halo_subscription"
+
+    def _update_values(self) -> None:
+        state = cast(HaloState, self.coordinator.data)
+        subscription = state.subscription
+        if not isinstance(subscription, dict):
+            self._attr_native_value = None
+            self._attr_extra_state_attributes = {}
+            return
+        access_level = _pretty_status(subscription.get("accessLevel"))
+        self._attr_native_value = access_level if isinstance(access_level, str) else None
+        attributes: dict[str, Any] = {}
+        usage_allowed = subscription.get("isApplicationUsageAllowed")
+        if isinstance(usage_allowed, bool):
+            attributes["application_usage_allowed"] = usage_allowed
+        for source, target in (
+            ("maxCollarsCount", "max_collars"),
+            ("maxGeoFencesCount", "max_fences"),
+        ):
+            value = _count_value({"metrics": subscription}, source)
+            if value is not None:
+                attributes[target] = value
+        self._attr_extra_state_attributes = attributes
+
+    def _handle_coordinator_update(self) -> None:
+        self._update_values()
+        super()._handle_coordinator_update()

@@ -18,8 +18,8 @@ A telemetry-first Home Assistant custom integration for your [Halo Collar](https
 The integration is **telemetry-only by default**. For each collar on your account it exposes:
 
 - **Device tracker** — pet location when Halo reports GPS coordinates. When the collar reports it is **indoors on its configured Wi-Fi** (where GPS is unreliable), the tracker pins the pet to `home` instead of drifting on a jittery fix.
-- **Sensors** — battery %, battery status, remaining battery lifetime, connection type (adapter), Wi-Fi status/signal, cellular status/signal, GPS accuracy, location status, safety status, firmware version, and last telemetry (when the collar last reported to the Halo cloud).
-- **Binary sensors** — connectivity (online/stale), fence breach, fence mode/synchronization, GPS calibration required, compass calibration required.
+- **Sensors** — battery %, battery status, remaining battery lifetime, connection type (adapter), Wi-Fi status/signal, cellular status/signal, GPS accuracy, location status, safety status, firmware version, last/next telemetry timestamps, current fence, fence configuration, average connectivity, daily/current-period activity, outdoor time, distance traveled, walks, and subscription limits.
+- **Binary sensors** — connectivity (online/stale), fence breach, fence mode/synchronization, GPS calibration required, compass calibration required, active walk, collar reporting issue, and firmware update availability.
 - **Events** — a fence breach event entity you can use directly as an automation trigger.
 - **Optional fence controls** — an idempotent **Enable fences** button, plus a separately opted-in **Fence mode** switch that can disable containment. Controls are unavailable on stale telemetry, fence-off is blocked during active walks, writes are not blindly retried, and state is refreshed after every command.
 - **Diagnostics** — download redacted diagnostics (tokens, serials, locations, and names removed) from the integration page to attach to bug reports.
@@ -82,7 +82,7 @@ Changing either control option reloads the integration so the corresponding enti
 
 - **Telemetry-only by default.** Fence controls exist only after explicit opt-in. Fence creation/editing/deletion, corrections, bind/unbind, and other control endpoints remain intentionally unsupported.
 - **Fence state is safety-critical.** Treat Home Assistant controls and automations as supplemental conveniences, not a containment authority. Confirm important changes in the official Halo app and physically verify your pet is safe.
-- Do not rely on this integration for your pet's containment or safety — the official Halo app and collar are the source of truth.
+- Do not rely on this integration for your pet's containment or safety — the official Halo app and collar are the source of truth. Location, fence, and active-walk state are cloud-polled supplemental telemetry, not real-time containment proof; activity metrics are provider daily/current-period values.
 - Because it depends on an undocumented API, functionality may degrade without notice.
 
 ## Troubleshooting

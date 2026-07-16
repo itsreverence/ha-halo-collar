@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+import math
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 REDACTED = "**REDACTED**"
@@ -144,12 +145,29 @@ def pet_safety_status(pet: dict[str, Any] | None) -> Any:
     return pretty_status(nested(pet or {}, "telemetry", "safetyStatus"))
 
 
+def active_walk_state(pet: dict[str, Any] | None, collar: dict[str, Any] | None) -> bool | None:
+    """Return the provider walk state, preserving missing telemetry as unknown."""
+    sources = (pet, collar)
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        payload = source.get("telemetry")
+        if isinstance(payload, dict) and "walk" in payload and payload["walk"] is not None:
+            return True
+    if all(
+        isinstance(source, dict)
+        and isinstance(source.get("telemetry"), dict)
+        and source["telemetry"].get("walk") is None
+        and "walk" in source["telemetry"]
+        for source in sources
+    ):
+        return False
+    return None
+
+
 def has_active_walk(pet: dict[str, Any] | None, collar: dict[str, Any] | None) -> bool:
-    """Return whether either Halo payload reports a current walk."""
-    return (
-        nested(pet or {}, "telemetry", "walk") is not None
-        or nested(collar or {}, "telemetry", "walk") is not None
-    )
+    """Fail closed unless both provider payloads explicitly report no active walk."""
+    return active_walk_state(pet, collar) is not False
 
 
 def parse_timestamp(value: Any) -> datetime | None:
@@ -233,6 +251,119 @@ def seconds_to_hours(value: Any) -> float | None:
         return round(float(value) / 3600, 1)
     except (TypeError, ValueError):
         return None
+
+
+def finite_number(value: Any) -> float | None:
+    """Return a finite numeric value, rejecting booleans and malformed input."""
+    if isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def non_negative_number(value: Any) -> float | None:
+    """Return a finite non-negative numeric value."""
+    number = finite_number(value)
+    return number if number is not None and number >= 0 else None
+
+
+def non_negative_integer(value: Any) -> int | None:
+    """Return a non-negative count, rejecting booleans and ambiguous numeric values."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value >= 0 else None
+    if isinstance(value, float):
+        return int(value) if math.isfinite(value) and value >= 0 and value.is_integer() else None
+    if isinstance(value, str):
+        normalized = value.strip()
+        if normalized.isdecimal():
+            return int(normalized)
+    return None
+
+
+def activity_value(pet: dict[str, Any] | None, key: str) -> float | None:
+    """Extract a non-negative current-period activity metric from a pet payload."""
+    return non_negative_number(nested(pet or {}, "metrics", key))
+
+
+def count_value(pet: dict[str, Any] | None, key: str) -> int | None:
+    """Extract a non-negative integral current-period count from a pet payload."""
+    return non_negative_integer(nested(pet or {}, "metrics", key))
+
+
+def goal_progress_attributes(
+    pet: dict[str, Any] | None, value_key: str, goal_key: str
+) -> dict[str, float]:
+    """Return safe goal and bounded progress attributes for an activity metric."""
+    goal = activity_value(pet, goal_key)
+    if goal is None:
+        return {}
+    attributes: dict[str, float] = {"goal": goal}
+    value = activity_value(pet, value_key)
+    if value is not None and goal > 0:
+        attributes["progress_percent"] = round(min(100, value / goal * 100), 1)
+    return attributes
+
+
+def count_goal_progress_attributes(
+    pet: dict[str, Any] | None, value_key: str, goal_key: str
+) -> dict[str, int | float]:
+    """Return safe integral count goals and bounded progress for a count metric."""
+    goal = count_value(pet, goal_key)
+    if goal is None:
+        return {}
+    attributes: dict[str, int | float] = {"goal": goal}
+    value = count_value(pet, value_key)
+    if value is not None and goal > 0:
+        attributes["progress_percent"] = round(min(100, value / goal * 100), 1)
+    return attributes
+
+
+def current_fence_name(pet: dict[str, Any] | None) -> str | None:
+    """Return the current fence name only; never expose its provider identifier."""
+    value = nested(pet or {}, "telemetry", "geoFence", "name")
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def fence_configuration_status(pet: dict[str, Any] | None) -> str | None:
+    """Return the human-readable reported fence configuration status."""
+    value = pretty_status(nested(pet or {}, "fencesState"))
+    return value if isinstance(value, str) else None
+
+
+def average_connectivity(collar: dict[str, Any]) -> float | None:
+    """Return the reported average connectivity percentage when valid."""
+    value = non_negative_number(nested(collar, "diagnostics", "averageConnectivityPercent"))
+    return min(100, round(value, 1)) if value is not None else None
+
+
+def next_expected_telemetry(collar: dict[str, Any]) -> datetime | None:
+    """Calculate the next expected report from the last report and provider interval."""
+    timestamp = last_telemetry(collar)
+    seconds = non_negative_number(nested(collar, "telemetry", "secondsToNextTelemetry"))
+    if timestamp is None or seconds is None:
+        return None
+    try:
+        return timestamp + timedelta(seconds=seconds)
+    except OverflowError:
+        return None
+
+
+def authoritative_bool(value: Any) -> bool | None:
+    """Return a provider flag only when it is explicitly boolean."""
+    return value if isinstance(value, bool) else None
+
+
+def reporting_issue(collar: dict[str, Any]) -> bool | None:
+    return authoritative_bool(nested(collar, "issues", "hasReportingIssue"))
+
+
+def firmware_update_available(collar: dict[str, Any]) -> bool | None:
+    return authoritative_bool(nested(collar, "hasFirmwareUpdatesAvailable"))
 
 
 def sensor_values(collar: dict[str, Any]) -> dict[str, Any]:

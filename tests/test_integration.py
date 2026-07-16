@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -8,7 +8,8 @@ import pytest
 pytest.importorskip("homeassistant")
 
 from homeassistant.config_entries import ConfigEntryState
-from homeassistant.const import STATE_ON, STATE_UNAVAILABLE
+from homeassistant.const import STATE_ON, STATE_UNAVAILABLE, STATE_UNKNOWN
+from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.halo_collar.api import HaloApiError, HaloAuthError, HaloState
@@ -64,22 +65,37 @@ class FailingHaloClient(FakeHaloClient):
 
 
 def _state(*, indoors: bool = False):
-    timestamp = datetime.now(UTC).isoformat()
+    timestamp = datetime.now(UTC).replace(microsecond=0).isoformat()
     pet = {
         "id": "pet-1",
         "name": "Cowboy",
         "collarInfo": {"id": "collar-1"},
         "isFencesSynchronized": True,
+        "fencesState": "upToDate",
+        "metrics": {
+            "activityDurationInSec": 900,
+            "activityDurationGoalInSec": 1200,
+            "outdoorTimeInSec": 300,
+            "outdoorTimeGoalInSec": 600,
+            "traveledDistance": 1400,
+            "traveledDistanceGoal": 2000,
+            "walksCount": 1,
+            "walksCountGoal": 2,
+        },
         "telemetry": {
             "mode": {"fencesOn": True},
             "walk": None,
             "safetyStatus": "safe",
+            "geoFence": {"name": "Synthetic Fence", "id": "excluded"},
         },
     }
     collar = {
         "id": "collar-1",
         "type": "Halo 4",
         "serialNumber": "serial-1",
+        "diagnostics": {"averageConnectivityPercent": 87.5},
+        "issues": {"hasReportingIssue": True},
+        "hasFirmwareUpdatesAvailable": False,
         "petInfo": {
             "id": "pet-1",
             "name": "Cowboy",
@@ -93,6 +109,7 @@ def _state(*, indoors: bool = False):
             "manifest": {"timestamp": timestamp},
             "mode": {"fencesOn": True},
             "walk": None,
+            "secondsToNextTelemetry": 300,
             "batteryChargePercent": 90,
             "currentAdapter": "wifi",
         },
@@ -100,7 +117,12 @@ def _state(*, indoors: bool = False):
     return HaloState(
         pets=[pet],
         collars=[collar],
-        subscription={"accessLevel": "basic"},
+        subscription={
+            "accessLevel": "basic",
+            "isApplicationUsageAllowed": True,
+            "maxCollarsCount": 2,
+            "maxGeoFencesCount": 20,
+        },
         server_time=timestamp,
     )
 
@@ -136,6 +158,14 @@ async def _setup(hass, entry, client):
         await hass.async_block_till_done()
 
 
+def _state_for_unique_id(hass, platform: str, unique_id: str):
+    entity_id = er.async_get(hass).async_get_entity_id(platform, DOMAIN, unique_id)
+    assert entity_id is not None
+    state = hass.states.get(entity_id)
+    assert state is not None
+    return state
+
+
 async def test_runtime_setup_registers_platforms_and_guarded_control_surface(hass):
     client = FakeHaloClient(_state())
     entry = _entry({})
@@ -151,6 +181,118 @@ async def test_runtime_setup_registers_platforms_and_guarded_control_surface(has
     assert hass.states.get("event.cowboy_fence_breach_event") is not None
     assert hass.states.get("binary_sensor.cowboy_fences_enabled").state == STATE_ON
     assert hass.states.get("binary_sensor.cowboy_fence_state_synchronized").state == STATE_ON
+
+    collar_id = client.state.collars[0]["id"]
+    activity = _state_for_unique_id(hass, "sensor", f"{collar_id}_activity_duration")
+    assert float(activity.state) == 900
+    assert activity.attributes["goal"] == 1200.0
+    assert activity.attributes["progress_percent"] == 75.0
+    outdoor_time = _state_for_unique_id(hass, "sensor", f"{collar_id}_outdoor_time")
+    assert float(outdoor_time.state) == 300
+    assert outdoor_time.attributes["goal"] == 600.0
+    assert outdoor_time.attributes["progress_percent"] == 50.0
+    distance = _state_for_unique_id(hass, "sensor", f"{collar_id}_traveled_distance")
+    assert float(distance.state) == 1400
+    assert distance.attributes["goal"] == 2000.0
+    assert distance.attributes["progress_percent"] == 70.0
+    walks_today = _state_for_unique_id(hass, "sensor", f"{collar_id}_walks_today")
+    assert int(walks_today.state) == 1
+    assert walks_today.attributes["goal"] == 2
+    assert walks_today.attributes["progress_percent"] == 50.0
+    fence = _state_for_unique_id(hass, "sensor", f"{collar_id}_current_fence")
+    assert fence.state == "Synthetic Fence"
+    assert "id" not in fence.attributes
+    fence_configuration = _state_for_unique_id(hass, "sensor", f"{collar_id}_fence_configuration")
+    assert fence_configuration.state == "Up to date"
+    assert _state_for_unique_id(hass, "sensor", f"{collar_id}_average_connectivity").state == "87.5"
+    last_report = datetime.fromisoformat(
+        client.state.collars[0]["telemetry"]["manifest"]["timestamp"]
+    )
+    next_telemetry = _state_for_unique_id(hass, "sensor", f"{collar_id}_next_expected_telemetry")
+    assert next_telemetry.state == (last_report + timedelta(seconds=300)).isoformat()
+    assert _state_for_unique_id(hass, "binary_sensor", f"{collar_id}_active_walk").state == "off"
+    assert (
+        _state_for_unique_id(hass, "binary_sensor", f"{collar_id}_collar_reporting_issue").state
+        == STATE_ON
+    )
+    assert (
+        _state_for_unique_id(hass, "binary_sensor", f"{collar_id}_firmware_update_available").state
+        == "off"
+    )
+
+    subscription = _state_for_unique_id(hass, "sensor", f"{entry.entry_id}_subscription")
+    assert (
+        er.async_get(hass).async_get_entity_id("sensor", DOMAIN, f"{entry.entry_id}_subscription")
+        == "sensor.halo_subscription"
+    )
+    assert subscription.state == "Basic"
+    assert subscription.attributes["application_usage_allowed"] is True
+    assert subscription.attributes["max_collars"] == 2
+    assert subscription.attributes["max_fences"] == 20
+
+
+async def test_runtime_insight_sensor_updates_after_coordinator_refresh(hass):
+    client = FakeHaloClient(_state())
+    entry = _entry({})
+    entry.add_to_hass(hass)
+    await _setup(hass, entry, client)
+    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    collar_id = client.state.collars[0]["id"]
+
+    client.state.pets[0]["metrics"].update({"outdoorTimeInSec": 480, "outdoorTimeGoalInSec": 960})
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+
+    outdoor_time = _state_for_unique_id(hass, "sensor", f"{collar_id}_outdoor_time")
+    assert float(outdoor_time.state) == 480
+    assert outdoor_time.attributes["goal"] == 960.0
+    assert outdoor_time.attributes["progress_percent"] == 50.0
+
+
+async def test_runtime_active_walk_entity_is_unknown_when_walk_fields_are_missing(hass):
+    client = FakeHaloClient(_state())
+    entry = _entry({})
+    entry.add_to_hass(hass)
+    await _setup(hass, entry, client)
+    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    collar_id = client.state.collars[0]["id"]
+
+    client.state.pets[0]["telemetry"].pop("walk")
+    client.state.collars[0]["telemetry"].pop("walk")
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+
+    active_walk = _state_for_unique_id(hass, "binary_sensor", f"{collar_id}_active_walk")
+    assert active_walk.state == STATE_UNKNOWN
+
+
+async def test_runtime_subscription_entity_fails_soft_on_empty_and_malformed_payloads(hass):
+    client = FakeHaloClient(_state())
+    entry = _entry({})
+    entry.add_to_hass(hass)
+    await _setup(hass, entry, client)
+    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+
+    client.state.subscription = {}
+    await coordinator.async_refresh()
+    empty = _state_for_unique_id(hass, "sensor", f"{entry.entry_id}_subscription")
+    assert empty.state == STATE_UNKNOWN
+    assert "application_usage_allowed" not in empty.attributes
+    assert "max_collars" not in empty.attributes
+    assert "max_fences" not in empty.attributes
+
+    client.state.subscription = {
+        "accessLevel": {},
+        "isApplicationUsageAllowed": "yes",
+        "maxCollarsCount": True,
+        "maxGeoFencesCount": 1.5,
+    }
+    await coordinator.async_refresh()
+    malformed = _state_for_unique_id(hass, "sensor", f"{entry.entry_id}_subscription")
+    assert malformed.state == STATE_UNKNOWN
+    assert "application_usage_allowed" not in malformed.attributes
+    assert "max_collars" not in malformed.attributes
+    assert "max_fences" not in malformed.attributes
 
 
 async def test_runtime_tracker_uses_home_zone_when_halo_reports_indoor_wifi(hass):

@@ -4,15 +4,26 @@ from datetime import UTC, datetime
 
 from custom_components.halo_collar.helpers import (
     REDACTED,
+    active_walk_state,
+    activity_value,
+    average_connectivity,
+    count_goal_progress_attributes,
+    count_value,
+    current_fence_name,
+    fence_configuration_status,
     fence_disable_block_reason,
+    firmware_update_available,
+    goal_progress_attributes,
     has_active_walk,
     indoors_on_wifi,
     is_online,
     last_telemetry,
+    next_expected_telemetry,
     pet_fences_enabled,
     pet_for_collar,
     pet_safety_status,
     redact,
+    reporting_issue,
     sensor_values,
 )
 
@@ -77,10 +88,121 @@ def test_pet_mapping_fails_closed_when_two_collars_claim_one_pet():
     assert pet_for_collar(pets, collars[1], collars) is None
 
 
-def test_active_walk_is_detected_from_either_payload():
-    assert has_active_walk({"telemetry": {"walk": {"id": "walk-1"}}}, {}) is True
-    assert has_active_walk({}, {"telemetry": {"walk": {"id": "walk-1"}}}) is True
-    assert has_active_walk({"telemetry": {"walk": None}}, {}) is False
+def test_active_walk_state_distinguishes_present_null_from_unknown_walk_telemetry():
+    assert active_walk_state({"telemetry": {"walk": {"synthetic": True}}}, {}) is True
+    assert active_walk_state({}, {"telemetry": {"walk": "invalid"}}) is True
+    assert active_walk_state({"telemetry": {"walk": None}}, {"telemetry": {"walk": None}}) is False
+    assert active_walk_state({}, {"telemetry": {"walk": None}}) is None
+    assert active_walk_state({"telemetry": []}, {"telemetry": {"walk": None}}) is None
+
+
+def test_has_active_walk_fails_closed_when_walk_telemetry_is_unknown():
+    assert has_active_walk({"telemetry": {"walk": {"synthetic": True}}}, {}) is True
+    assert has_active_walk({"telemetry": {"walk": None}}, {"telemetry": {"walk": None}}) is False
+    assert has_active_walk({}, {"telemetry": {"walk": None}}) is True
+    assert has_active_walk({"telemetry": []}, {"telemetry": {"walk": None}}) is True
+
+
+def test_activity_and_goal_extractors_are_fail_soft_and_bounded():
+    pet = {
+        "metrics": {
+            "activityDurationInSec": 900,
+            "activityDurationGoalInSec": 600,
+            "outdoorTimeInSec": 120,
+            "outdoorTimeGoalInSec": 0,
+            "traveledDistance": 1234.5,
+            "traveledDistanceGoal": 2000,
+            "walksCount": 2,
+            "walksCountGoal": 4,
+        }
+    }
+
+    assert activity_value(pet, "activityDurationInSec") == 900
+    assert goal_progress_attributes(pet, "activityDurationInSec", "activityDurationGoalInSec") == {
+        "goal": 600,
+        "progress_percent": 100,
+    }
+    assert goal_progress_attributes(pet, "outdoorTimeInSec", "outdoorTimeGoalInSec") == {"goal": 0}
+    assert goal_progress_attributes(pet, "traveledDistance", "traveledDistanceGoal") == {
+        "goal": 2000,
+        "progress_percent": 61.7,
+    }
+    assert goal_progress_attributes(pet, "walksCount", "walksCountGoal") == {
+        "goal": 4,
+        "progress_percent": 50,
+    }
+    assert count_value(pet, "walksCount") == 2
+    assert count_goal_progress_attributes(pet, "walksCount", "walksCountGoal") == {
+        "goal": 4,
+        "progress_percent": 50,
+    }
+
+    for malformed in (True, "bad", float("nan"), float("inf"), -1):
+        assert activity_value({"metrics": {"value": malformed}}, "value") is None
+        assert (
+            goal_progress_attributes({"metrics": {"value": 1, "goal": malformed}}, "value", "goal")
+            == {}
+        )
+
+    for malformed in (True, -1, -1.0, 1.5, float("nan"), float("inf"), "bad", "1.5"):
+        assert count_value({"metrics": {"value": malformed}}, "value") is None
+    assert count_value({"metrics": {"value": "2"}}, "value") == 2
+
+
+def test_insight_extractors_expose_only_allowlisted_values_and_fail_soft():
+    collar = {
+        "diagnostics": {"averageConnectivityPercent": 99.94},
+        "issues": {"hasReportingIssue": True},
+        "hasFirmwareUpdatesAvailable": False,
+        "telemetry": {
+            "manifest": {"timestamp": "2026-07-06T12:00:00Z"},
+            "secondsToNextTelemetry": 300,
+        },
+    }
+    pet = {
+        "fencesState": "upToDate",
+        "telemetry": {"geoFence": {"name": "Synthetic Fence", "id": "do-not-expose"}},
+    }
+
+    assert current_fence_name(pet) == "Synthetic Fence"
+    assert fence_configuration_status(pet) == "Up to date"
+    assert average_connectivity(collar) == 99.9
+    assert next_expected_telemetry(collar) == datetime(2026, 7, 6, 12, 5, tzinfo=UTC)
+    assert reporting_issue(collar) is True
+    assert firmware_update_available(collar) is False
+
+    malformed = {"telemetry": {"secondsToNextTelemetry": -1}}
+    assert current_fence_name({"telemetry": {"geoFence": {"name": 3}}}) is None
+    assert fence_configuration_status({"fencesState": {}}) is None
+    assert average_connectivity({"diagnostics": {"averageConnectivityPercent": True}}) is None
+    assert next_expected_telemetry(malformed) is None
+    assert reporting_issue({"issues": {"hasReportingIssue": "true"}}) is None
+    assert firmware_update_available({"hasFirmwareUpdatesAvailable": 1}) is None
+
+
+def test_next_expected_telemetry_returns_none_for_finite_overflowing_intervals():
+    assert (
+        next_expected_telemetry(
+            {
+                "telemetry": {
+                    "manifest": {"timestamp": "2026-07-06T12:00:00Z"},
+                    "secondsToNextTelemetry": 1e300,
+                }
+            }
+        )
+        is None
+    )
+    assert (
+        next_expected_telemetry(
+            {
+                "telemetry": {
+                    "manifest": {"timestamp": "9999-12-31T23:59:59+00:00"},
+                    "secondsToNextTelemetry": 1,
+                }
+            }
+        )
+        is None
+    )
 
 
 def test_fence_disable_preflight_requires_fresh_synchronized_reported_state():
@@ -114,6 +236,35 @@ def test_fence_disable_preflight_requires_fresh_synchronized_reported_state():
     assert (
         fence_disable_block_reason(pet, stale_collar, stale_after=900)
         == "Halo collar telemetry is stale"
+    )
+
+
+def test_fence_disable_preflight_rejects_malformed_non_null_walk_telemetry():
+    collar = {"telemetry": {"manifest": {"timestamp": datetime.now(UTC).isoformat()}, "walk": None}}
+    pet = {
+        "isFencesSynchronized": True,
+        "telemetry": {"mode": {"fencesOn": True}, "walk": None},
+    }
+
+    for pet_walk, collar_walk in (("malformed", None), (None, [])):
+        blocked_pet = {**pet, "telemetry": {**pet["telemetry"], "walk": pet_walk}}
+        blocked_collar = {**collar, "telemetry": {**collar["telemetry"], "walk": collar_walk}}
+        assert (
+            fence_disable_block_reason(blocked_pet, blocked_collar, stale_after=900)
+            == "Halo fences cannot be disabled during an active walk"
+        )
+
+
+def test_fence_disable_preflight_blocks_when_walk_telemetry_is_missing_or_malformed():
+    collar = {"telemetry": {"manifest": {"timestamp": datetime.now(UTC).isoformat()}}}
+    pet = {
+        "isFencesSynchronized": True,
+        "telemetry": {"mode": {"fencesOn": True}},
+    }
+
+    assert (
+        fence_disable_block_reason(pet, collar, stale_after=900)
+        == "Halo fences cannot be disabled during an active walk"
     )
 
 
