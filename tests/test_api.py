@@ -198,6 +198,39 @@ async def test_timeouts_are_wrapped_as_api_errors():
     assert len(session.gets) == 3
 
 
+class StalledGetBodyResponse(FakeResponse):
+    async def json(self, content_type=None):
+        await asyncio.sleep(60)
+
+
+@pytest.mark.asyncio
+async def test_get_timeout_covers_response_body_and_releases_each_attempt(monkeypatch):
+    monkeypatch.setattr(halo_api, "REQUEST_TIMEOUT_SECONDS", 0.01)
+    response = StalledGetBodyResponse(200, {})
+    session = SequencedSession([response])
+    client = _new_client(session)
+
+    with pytest.raises(HaloApiError):
+        await client.async_get("/pet/my")
+
+    assert len(session.gets) == 3
+    assert response.released is True
+
+
+@pytest.mark.asyncio
+async def test_get_releases_transient_responses_before_retrying():
+    first = FakeResponse(503, {"error": "unavailable"})
+    second = FakeResponse(429, {"error": "rate limited"})
+    third = FakeResponse(200, {"ok": True})
+    session = SequencedSession([first, second, third])
+    client = _new_client(session)
+
+    assert await client.async_get("/pet/my") == {"ok": True}
+    assert first.released is True
+    assert second.released is True
+    assert third.released is True
+
+
 @pytest.mark.asyncio
 async def test_persistent_401_after_refresh_raises_auth_error():
     session = SequencedSession([FakeResponse(401, {"error": "unauthorized"})])
@@ -215,6 +248,60 @@ async def test_token_endpoint_outage_is_not_an_auth_error():
     with pytest.raises(HaloApiError) as excinfo:
         await client.async_login("user@example.com", "hunter2", scope="openid")
     assert not isinstance(excinfo.value, HaloAuthError)
+
+
+class StalledTokenBodyResponse(FakeResponse):
+    async def text(self):
+        await asyncio.sleep(60)
+        return ""
+
+
+class StalledTokenBodySession(FakeSession):
+    def __init__(self):
+        super().__init__()
+        self.response = StalledTokenBodyResponse(200, {})
+
+    async def post(self, url, data=None, headers=None):
+        self.posts.append((url, data, headers))
+        return self.response
+
+
+@pytest.mark.asyncio
+async def test_token_timeout_covers_response_body_and_releases_response(monkeypatch):
+    monkeypatch.setattr(halo_api, "REQUEST_TIMEOUT_SECONDS", 0.01)
+    session = StalledTokenBodySession()
+    client = _new_client(session)
+
+    with pytest.raises(HaloApiError):
+        await client.async_login("user@example.com", "hunter2", scope="openid")
+
+    assert session.response.released is True
+
+
+class InvalidJsonTokenResponse(FakeResponse):
+    async def json(self, content_type=None):
+        raise ValueError("invalid json")
+
+
+class InvalidJsonTokenSession(FakeSession):
+    def __init__(self):
+        super().__init__()
+        self.response = InvalidJsonTokenResponse(200, "not-json")
+
+    async def post(self, url, data=None, headers=None):
+        self.posts.append((url, data, headers))
+        return self.response
+
+
+@pytest.mark.asyncio
+async def test_invalid_token_success_body_is_auth_error_and_releases_response():
+    session = InvalidJsonTokenSession()
+    client = _new_client(session)
+
+    with pytest.raises(HaloAuthError, match="invalid JSON"):
+        await client.async_login("user@example.com", "hunter2", scope="openid")
+
+    assert session.response.released is True
 
 
 @pytest.mark.asyncio
