@@ -9,10 +9,17 @@ from homeassistant.components.binary_sensor import (
     BinarySensorEntity,
     BinarySensorEntityDescription,
 )
+from homeassistant.const import EntityCategory
 
 from .const import CONF_STALE_AFTER, DEFAULT_STALE_AFTER_SECONDS, DOMAIN
 from .entity import HaloEntity
-from .helpers import is_online, pet_fences_enabled
+from .helpers import (
+    active_walk_state,
+    firmware_update_available,
+    is_online,
+    pet_fences_enabled,
+    reporting_issue,
+)
 
 
 def _online(collar: dict[str, Any], _pet, entry) -> bool:
@@ -69,6 +76,25 @@ BINARY_SENSORS = (
             if pet is not None and isinstance(pet.get("isFencesSynchronized"), bool)
             else None
         ),
+    ),
+    HaloBinarySensorDescription(
+        key="active_walk",
+        translation_key="active_walk",
+        value_fn=lambda c, p, _entry: active_walk_state(p, c),
+    ),
+    HaloBinarySensorDescription(
+        key="collar_reporting_issue",
+        translation_key="collar_reporting_issue",
+        device_class=BinarySensorDeviceClass.PROBLEM,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda c, _p, _entry: reporting_issue(c),
+    ),
+    HaloBinarySensorDescription(
+        key="firmware_update_available",
+        translation_key="firmware_update_available",
+        device_class=BinarySensorDeviceClass.UPDATE,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda c, _p, _entry: firmware_update_available(c),
     ),
 )
 

@@ -24,8 +24,8 @@ Home Assistant config entry (email + stored tokens; password is never persisted)
 
 ## Platforms
 
-- `sensor`: battery, battery status, remaining battery lifetime, connection type (adapter), Wi-Fi/cellular status and signal, GPS accuracy, location status, safety status, firmware, last telemetry timestamp.
-- `binary_sensor`: connectivity (staleness threshold configurable via options), fence breach, fence mode, fence synchronization, GPS calibration required, compass calibration required.
+- `sensor`: battery, battery status, remaining battery lifetime, connection type (adapter), Wi-Fi/cellular status and signal, GPS accuracy, location status, safety status, firmware, last/next telemetry timestamps, daily/current-period activity goals and progress, current fence, fence configuration, average connectivity, and one account-level subscription summary.
+- `binary_sensor`: connectivity (staleness threshold configurable via options), fence breach, fence mode, fence synchronization, GPS calibration required, compass calibration required, active walk, collar reporting issue, and firmware update availability.
 - `device_tracker`: pet/collar GPS tracker when Halo returns usable coordinates; pins the pet to `home` while the collar reports indoors on its configured Wi-Fi (GPS is unreliable indoors).
 - `event`: fence breach event entity for automation triggers.
 - `button`: fail-safe idempotent fence enable, available only after the first control opt-in.
@@ -54,7 +54,6 @@ errors, 429s, 5xx — including 5xx from the token endpoint) is `HaloApiError`
 and surfaces as a temporary `UpdateFailed` without prompting for credentials.
 GET requests retry twice with a short backoff before giving up.
 
-## Possible future work
+## Telemetry semantics
 
-- Add a `next telemetry` / stale-countdown sensor if a suitable field is found
-  in the Halo payload.
+Activity values are provider daily/current-period readings. Location, current-fence, and active-walk state are cloud-polled supplemental telemetry, not real-time containment proof. The next-telemetry sensor is a timestamp calculated from the last report and provider interval; it is not a local countdown.
