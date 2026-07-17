@@ -183,6 +183,19 @@ def has_active_walk(pet: dict[str, Any] | None, collar: dict[str, Any] | None) -
     return active_walk_state(pet, collar) is not False
 
 
+def _active_walk_payload(
+    pet: dict[str, Any] | None, collar: dict[str, Any] | None
+) -> dict[str, Any] | None:
+    """Return the direct collar walk snapshot, falling back to the pet response copy."""
+    for payload in (
+        nested(collar or {}, "telemetry", "walk"),
+        nested(pet or {}, "collarInfo", "telemetry", "walk"),
+    ):
+        if isinstance(payload, dict):
+            return payload
+    return None
+
+
 def parse_timestamp(value: Any) -> datetime | None:
     if not isinstance(value, str) or not value:
         return None
@@ -339,6 +352,30 @@ def non_negative_integer(value: Any) -> int | None:
         if normalized.isdecimal():
             return int(normalized)
     return None
+
+
+def active_walk_duration(pet: dict[str, Any] | None, collar: dict[str, Any] | None) -> float | None:
+    """Return cloud-reported elapsed seconds for the active walk."""
+    payload = _active_walk_payload(pet, collar)
+    return non_negative_number(payload.get("durationFromStartInSeconds")) if payload else None
+
+
+def active_walk_distance(pet: dict[str, Any] | None, collar: dict[str, Any] | None) -> float | None:
+    """Return the per-pet distance shown by Halo for the active walk."""
+    payload = _active_walk_payload(pet, collar)
+    return non_negative_number(payload.get("walkedDistance")) if payload else None
+
+
+def active_walk_paused(pet: dict[str, Any] | None, collar: dict[str, Any] | None) -> bool | None:
+    """Return pause state while active, off at confirmed idle, and unknown otherwise."""
+    state = active_walk_state(pet, collar)
+    if state is False:
+        return False
+    if state is not True:
+        return None
+    payload = _active_walk_payload(pet, collar)
+    paused = payload.get("isPaused") if payload else None
+    return paused if isinstance(paused, bool) else None
 
 
 def activity_value(pet: dict[str, Any] | None, key: str) -> float | None:

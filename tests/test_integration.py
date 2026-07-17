@@ -452,7 +452,7 @@ async def test_runtime_active_walk_entity_is_unknown_when_walk_fields_are_missin
     assert active_walk.state == STATE_UNKNOWN
 
 
-async def test_runtime_active_walk_entity_tracks_verified_collar_snapshots(hass):
+async def test_runtime_active_walk_entities_track_verified_collar_snapshots(hass):
     client = FakeHaloClient(_state())
     entry = _entry({})
     entry.add_to_hass(hass)
@@ -461,25 +461,66 @@ async def test_runtime_active_walk_entity_tracks_verified_collar_snapshots(hass)
     collar_id = client.state.collars[0]["id"]
 
     active_walk_unique_id = f"{collar_id}_active_walk"
+    paused_unique_id = f"{collar_id}_active_walk_paused"
+    duration_unique_id = f"{collar_id}_active_walk_duration"
+    distance_unique_id = f"{collar_id}_active_walk_distance"
     assert _state_for_unique_id(hass, "binary_sensor", active_walk_unique_id).state == "off"
+    assert _state_for_unique_id(hass, "binary_sensor", paused_unique_id).state == "off"
+    assert _state_for_unique_id(hass, "sensor", duration_unique_id).state == STATE_UNKNOWN
+    assert _state_for_unique_id(hass, "sensor", distance_unique_id).state == STATE_UNKNOWN
 
-    synthetic_walk = {"durationFromStartInSeconds": 60, "isPaused": False}
+    synthetic_walk = {
+        "durationFromStartInSeconds": 60,
+        "walkedDistance": 125.5,
+        "isPaused": False,
+        "id": "PRIVATE_ACTIVE_WALK_ID",
+        "location": "PRIVATE_ACTIVE_LOCATION_SENTINEL",
+    }
     client.state.pets[0]["collarInfo"]["telemetry"]["walk"] = synthetic_walk
     client.state.collars[0]["telemetry"]["walk"] = synthetic_walk
     await coordinator.async_refresh()
     await hass.async_block_till_done()
     assert _state_for_unique_id(hass, "binary_sensor", active_walk_unique_id).state == STATE_ON
+    assert _state_for_unique_id(hass, "binary_sensor", paused_unique_id).state == "off"
+    duration = _state_for_unique_id(hass, "sensor", duration_unique_id)
+    distance = _state_for_unique_id(hass, "sensor", distance_unique_id)
+    assert duration.state == "60.0"
+    assert duration.attributes["unit_of_measurement"] == "s"
+    assert distance.state == "125.5"
+    assert distance.attributes["unit_of_measurement"] == "m"
+    serialized_entities = json.dumps(
+        {
+            "duration": duration.as_dict(),
+            "distance": distance.as_dict(),
+            "paused": _state_for_unique_id(hass, "binary_sensor", paused_unique_id).as_dict(),
+        }
+    ).lower()
+    assert "private_active_walk_id" not in serialized_entities
+    assert "private_active_location_sentinel" not in serialized_entities
+
+    synthetic_walk.update(
+        {"durationFromStartInSeconds": 120, "walkedDistance": 250, "isPaused": True}
+    )
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+    assert _state_for_unique_id(hass, "binary_sensor", paused_unique_id).state == STATE_ON
+    assert _state_for_unique_id(hass, "sensor", duration_unique_id).state == "120.0"
+    assert _state_for_unique_id(hass, "sensor", distance_unique_id).state == "250.0"
 
     client.state.pets[0]["collarInfo"]["telemetry"]["walk"] = None
     client.state.collars[0]["telemetry"]["walk"] = None
     await coordinator.async_refresh()
     await hass.async_block_till_done()
     assert _state_for_unique_id(hass, "binary_sensor", active_walk_unique_id).state == "off"
+    assert _state_for_unique_id(hass, "binary_sensor", paused_unique_id).state == "off"
+    assert _state_for_unique_id(hass, "sensor", duration_unique_id).state == STATE_UNKNOWN
+    assert _state_for_unique_id(hass, "sensor", distance_unique_id).state == STATE_UNKNOWN
 
     client.state.pets[0]["collarInfo"]["telemetry"].pop("walk")
     await coordinator.async_refresh()
     await hass.async_block_till_done()
     assert _state_for_unique_id(hass, "binary_sensor", active_walk_unique_id).state == STATE_UNKNOWN
+    assert _state_for_unique_id(hass, "binary_sensor", paused_unique_id).state == STATE_UNKNOWN
     assert client.writes == []
 
 

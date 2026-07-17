@@ -4,6 +4,9 @@ from datetime import UTC, datetime
 
 from custom_components.halo_collar.helpers import (
     REDACTED,
+    active_walk_distance,
+    active_walk_duration,
+    active_walk_paused,
     active_walk_state,
     activity_value,
     average_connectivity,
@@ -221,6 +224,62 @@ def test_has_active_walk_fails_closed_when_walk_telemetry_is_unknown():
     assert has_active_walk(idle_pet, {"telemetry": {"walk": None}}) is False
     assert has_active_walk({}, {"telemetry": {"walk": None}}) is True
     assert has_active_walk({"collarInfo": {"telemetry": []}}, {"telemetry": {"walk": None}}) is True
+
+
+def test_active_walk_detail_extractors_prefer_direct_collar_snapshot_and_fail_soft():
+    pet_walk = {
+        "durationFromStartInSeconds": 50,
+        "walkedDistance": 100,
+        "isPaused": False,
+        "id": "PRIVATE_WALK_ID",
+    }
+    collar_walk = {
+        "durationFromStartInSeconds": 60,
+        "walkedDistance": 125.5,
+        "isPaused": True,
+        "location": "PRIVATE_LOCATION_SENTINEL",
+    }
+    pet = {"collarInfo": {"telemetry": {"walk": pet_walk}}}
+    collar = {"telemetry": {"walk": collar_walk}}
+
+    assert active_walk_duration(pet, collar) == 60
+    assert active_walk_distance(pet, collar) == 125.5
+    assert active_walk_paused(pet, collar) is True
+
+    idle_pet = {"collarInfo": {"telemetry": {"walk": None}}}
+    idle_collar = {"telemetry": {"walk": None}}
+    assert active_walk_duration(idle_pet, idle_collar) is None
+    assert active_walk_distance(idle_pet, idle_collar) is None
+    assert active_walk_paused(idle_pet, idle_collar) is False
+
+    fallback_collar = {"telemetry": {"walk": None}}
+    assert active_walk_duration(pet, fallback_collar) == 50
+    assert active_walk_distance(pet, fallback_collar) == 100
+    assert active_walk_paused(pet, fallback_collar) is False
+
+    assert active_walk_duration({}, {}) is None
+    assert active_walk_distance({}, {}) is None
+    assert active_walk_paused({}, {}) is None
+
+
+def test_active_walk_detail_extractors_reject_malformed_provider_values():
+    idle_pet = {"collarInfo": {"telemetry": {"walk": None}}}
+    for malformed in (True, "bad", -1, float("nan"), float("inf")):
+        collar = {
+            "telemetry": {
+                "walk": {
+                    "durationFromStartInSeconds": malformed,
+                    "walkedDistance": malformed,
+                    "isPaused": False,
+                }
+            }
+        }
+        assert active_walk_duration(idle_pet, collar) is None
+        assert active_walk_distance(idle_pet, collar) is None
+
+    for malformed in (0, 1, "false", None, [], {}):
+        collar = {"telemetry": {"walk": {"isPaused": malformed}}}
+        assert active_walk_paused(idle_pet, collar) is None
 
 
 def test_activity_and_goal_extractors_are_fail_soft_and_bounded():
