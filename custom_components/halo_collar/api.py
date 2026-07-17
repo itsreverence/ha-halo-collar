@@ -427,13 +427,20 @@ class HaloApiClient:
             raise HaloApiError("Token request returned an invalid refresh_token")
         if isinstance(expires_in, bool) or not isinstance(expires_in, (int, float)):
             raise HaloApiError("Token request returned an invalid expires_in")
-        if not math.isfinite(float(expires_in)) or expires_in <= TOKEN_REFRESH_SKEW_SECONDS:
+        try:
+            expires_in_seconds = float(expires_in)
+        except (OverflowError, ValueError):
+            raise HaloApiError("Token request returned an invalid expires_in") from None
+        if (
+            not math.isfinite(expires_in_seconds)
+            or expires_in_seconds <= TOKEN_REFRESH_SKEW_SECONDS
+        ):
             raise HaloApiError("Token request returned an invalid expires_in")
 
         # Commit the fully validated token set atomically.
         self._access_token = access_token
         self._refresh_token = refresh_token
-        self._expires_at = time.time() + float(expires_in) - TOKEN_REFRESH_SKEW_SECONDS
+        self._expires_at = time.time() + expires_in_seconds - TOKEN_REFRESH_SKEW_SECONDS
 
     def _headers(self) -> dict[str, str]:
         return {

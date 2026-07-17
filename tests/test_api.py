@@ -330,6 +330,7 @@ class TokenPayloadSession(FakeSession):
         {"access_token": "new", "refresh_token": "new-r", "expires_in": "bad"},
         {"access_token": "new", "refresh_token": "new-r", "expires_in": 0},
         {"access_token": "new", "refresh_token": "new-r", "expires_in": float("inf")},
+        {"access_token": "new", "refresh_token": "new-r", "expires_in": 10**1000},
         {"access_token": "new", "refresh_token": "new-r", "expires_in": True},
     ],
 )
