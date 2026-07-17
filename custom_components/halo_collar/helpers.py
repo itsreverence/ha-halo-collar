@@ -63,6 +63,31 @@ _WALK_START_TRIGGER_LABELS = {
     "button": "Button",
 }
 
+_COLLAR_ISSUE_FIELDS = (
+    (("battery", "chargingIssue2IssueStatus"), "Charging"),
+    (("battery", "degradationIssueStatus"), "Battery degradation"),
+    (("battery", "gaugeChipFailureIssueStatus"), "Battery gauge"),
+    (("gps", "chipFailure1IssueStatus"), "GPS chip 1"),
+    (("gps", "chipFailure4IssueStatus"), "GPS chip 4"),
+    (("gps", "outdatedChipFailureIssueStatus"), "Outdated GPS chip"),
+    (("lte", "moduleFailureIssueStatus"), "LTE module"),
+    (("lte", "simCardScrappedIssueStatus"), "SIM card"),
+    (("lte", "simCardSlotFailureIssueStatus"), "SIM card slot"),
+    (("wifi", "moduleFailureIssueStatus"), "Wi-Fi module"),
+    (("other", "audioChipFailureIssueStatus"), "Audio chip"),
+    (("other", "bleChipFailureIssueStatus"), "Bluetooth chip"),
+    (("other", "processorCorruption1IssueStatus"), "Processor corruption 1"),
+    (("other", "processorCorruption2IssueStatus"), "Processor corruption 2"),
+    (("other", "processorCorruption3IssueStatus"), "Processor corruption 3"),
+    (("sensors", "compassCalibrationFailureIssueStatus"), "Compass calibration"),
+    (("sensors", "memsChipFailureIssueStatus"), "Motion sensor chip"),
+)
+_COLLAR_ISSUE_LEVELS = {
+    "noissue": None,
+    "noncatastrophic": "non_critical_issues",
+    "catastrophic": "critical_issues",
+}
+
 
 class WalkSummary(TypedDict):
     ended_at: datetime
@@ -493,6 +518,30 @@ def authoritative_bool(value: Any) -> bool | None:
 
 def reporting_issue(collar: dict[str, Any]) -> bool | None:
     return authoritative_bool(nested(collar, "issues", "hasReportingIssue"))
+
+
+def collar_issue_details(collar: dict[str, Any]) -> dict[str, list[str]] | None:
+    """Return bounded hardware issue labels only from a complete trustworthy scan."""
+    if reporting_issue(collar) is not False:
+        return None
+    issues = collar.get("issues")
+    if not isinstance(issues, dict):
+        return None
+    details = {"critical_issues": [], "non_critical_issues": []}
+    for path, label in _COLLAR_ISSUE_FIELDS:
+        status = nested(issues, *path)
+        if not isinstance(status, str) or status.casefold() not in _COLLAR_ISSUE_LEVELS:
+            return None
+        level = _COLLAR_ISSUE_LEVELS[status.casefold()]
+        if level is not None:
+            details[level].append(label)
+    return {key: values for key, values in details.items() if values}
+
+
+def collar_hardware_issue(collar: dict[str, Any]) -> bool | None:
+    """Return whether a complete trustworthy diagnostics scan reports an issue."""
+    details = collar_issue_details(collar)
+    return None if details is None else bool(details)
 
 
 def firmware_update_available(collar: dict[str, Any]) -> bool | None:

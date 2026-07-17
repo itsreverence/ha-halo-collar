@@ -10,7 +10,13 @@ from homeassistant.components.sensor import (
     SensorEntityDescription,
     SensorStateClass,
 )
-from homeassistant.const import PERCENTAGE, EntityCategory, UnitOfLength, UnitOfTime
+from homeassistant.const import (
+    PERCENTAGE,
+    EntityCategory,
+    UnitOfLength,
+    UnitOfSpeed,
+    UnitOfTime,
+)
 from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -272,6 +278,13 @@ WALK_SENSORS = (
         device_class=SensorDeviceClass.DISTANCE,
         native_unit_of_measurement=UnitOfLength.METERS,
     ),
+    SensorEntityDescription(
+        key="last_walk_average_speed",
+        translation_key="last_walk_average_speed",
+        device_class=SensorDeviceClass.SPEED,
+        native_unit_of_measurement=UnitOfSpeed.METERS_PER_SECOND,
+        suggested_display_precision=2,
+    ),
 )
 
 
@@ -312,8 +325,20 @@ class HaloWalkSensor(  # pyright: ignore[reportIncompatibleVariableOverride]
         elif key == "last_walk_duration":
             self._attr_native_value = summary["duration"]
             self._attr_extra_state_attributes = {}
-        else:
+        elif key == "last_walk_distance":
             self._attr_native_value = summary["distance"]
+            self._attr_extra_state_attributes = {}
+        elif key == "last_walk_average_speed":
+            duration = summary["duration"]
+            distance = summary["distance"]
+            self._attr_native_value = (
+                distance / duration
+                if duration is not None and duration > 0 and distance is not None
+                else None
+            )
+            self._attr_extra_state_attributes = {}
+        else:
+            self._attr_native_value = None
             self._attr_extra_state_attributes = {}
 
     def _handle_coordinator_update(self) -> None:

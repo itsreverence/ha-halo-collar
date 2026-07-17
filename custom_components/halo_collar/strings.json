@@ -79,6 +79,7 @@
       "last_walk": {"name": "Latest walk in recent history"},
       "last_walk_duration": {"name": "Recent walk duration"},
       "last_walk_distance": {"name": "Recent walk distance"},
+      "last_walk_average_speed": {"name": "Recent walk average speed"},
       "subscription": {"name": "Subscription"}
     },
     "binary_sensor": {
@@ -91,6 +92,7 @@
       "active_walk": {"name": "Active walk"},
       "active_walk_paused": {"name": "Active walk paused"},
       "collar_reporting_issue": {"name": "Collar reporting issue"},
+      "collar_hardware_issue": {"name": "Collar hardware issue"},
       "firmware_update_available": {"name": "Firmware update available"}
     },
     "button": {

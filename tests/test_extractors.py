@@ -10,6 +10,8 @@ from custom_components.halo_collar.helpers import (
     active_walk_state,
     activity_value,
     average_connectivity,
+    collar_hardware_issue,
+    collar_issue_details,
     count_goal_progress_attributes,
     count_value,
     current_fence_name,
@@ -30,6 +32,39 @@ from custom_components.halo_collar.helpers import (
     reporting_issue,
     sensor_values,
 )
+
+
+def _complete_issues(status: str = "noIssue") -> dict:
+    return {
+        "hasReportingIssue": False,
+        "battery": {
+            "chargingIssue2IssueStatus": status,
+            "degradationIssueStatus": status,
+            "gaugeChipFailureIssueStatus": status,
+        },
+        "gps": {
+            "chipFailure1IssueStatus": status,
+            "chipFailure4IssueStatus": status,
+            "outdatedChipFailureIssueStatus": status,
+        },
+        "lte": {
+            "moduleFailureIssueStatus": status,
+            "simCardScrappedIssueStatus": status,
+            "simCardSlotFailureIssueStatus": status,
+        },
+        "wifi": {"moduleFailureIssueStatus": status},
+        "other": {
+            "audioChipFailureIssueStatus": status,
+            "bleChipFailureIssueStatus": status,
+            "processorCorruption1IssueStatus": status,
+            "processorCorruption2IssueStatus": status,
+            "processorCorruption3IssueStatus": status,
+        },
+        "sensors": {
+            "compassCalibrationFailureIssueStatus": status,
+            "memsChipFailureIssueStatus": status,
+        },
+    }
 
 
 def test_latest_completed_walk_selects_newest_matching_safe_summary():
@@ -358,6 +393,36 @@ def test_insight_extractors_expose_only_allowlisted_values_and_fail_soft():
     assert next_expected_telemetry(malformed) is None
     assert reporting_issue({"issues": {"hasReportingIssue": "true"}}) is None
     assert firmware_update_available({"hasFirmwareUpdatesAvailable": 1}) is None
+
+
+def test_collar_hardware_issue_requires_complete_trustworthy_allowlisted_scan():
+    clean = {"issues": _complete_issues()}
+    assert collar_hardware_issue(clean) is False
+    assert collar_issue_details(clean) == {}
+
+    active = _complete_issues()
+    active["battery"]["degradationIssueStatus"] = "nonCatastrophic"
+    active["other"]["audioChipFailureIssueStatus"] = "catastrophic"
+    assert collar_hardware_issue({"issues": active}) is True
+    assert collar_issue_details({"issues": active}) == {
+        "critical_issues": ["Audio chip"],
+        "non_critical_issues": ["Battery degradation"],
+    }
+
+    unreliable = _complete_issues()
+    unreliable["hasReportingIssue"] = True
+    assert collar_hardware_issue({"issues": unreliable}) is None
+    assert collar_issue_details({"issues": unreliable}) is None
+
+    malformed = _complete_issues()
+    malformed["wifi"]["moduleFailureIssueStatus"] = "unexpected-provider-value"
+    assert collar_hardware_issue({"issues": malformed}) is None
+    assert collar_issue_details({"issues": malformed}) is None
+
+    missing = _complete_issues()
+    del missing["gps"]["chipFailure1IssueStatus"]
+    assert collar_hardware_issue({"issues": missing}) is None
+    assert collar_issue_details({"issues": missing}) is None
 
 
 def test_next_expected_telemetry_returns_none_for_finite_overflowing_intervals():
