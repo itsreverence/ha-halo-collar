@@ -37,12 +37,15 @@ class FakeResponse:
 class FakeSession:
     def __init__(self, token_status=200):
         self.posts = []
+        self.post_redirects = []
         self.gets = []
+        self.get_redirects = []
         self.puts = []
         self.put_redirects = []
         self._token_status = token_status
 
-    async def post(self, url, data=None, headers=None):
+    async def post(self, url, data=None, headers=None, allow_redirects=True):
+        self.post_redirects.append(allow_redirects)
         self.posts.append((url, data, headers))
         if self._token_status >= 400:
             return FakeResponse(self._token_status, {"error": "invalid_grant"})
@@ -55,7 +58,8 @@ class FakeSession:
             },
         )
 
-    async def get(self, url, headers=None):
+    async def get(self, url, headers=None, allow_redirects=True):
+        self.get_redirects.append(allow_redirects)
         self.gets.append((url, headers))
         if url.endswith("/pet/my"):
             return FakeResponse(200, [{"id": "pet1"}])
@@ -110,10 +114,12 @@ async def test_refreshes_expired_token_and_fetches_state():
     ) == 1
     assert client.token_snapshot["refresh_token"] == "new-refresh"
     assert client.token_snapshot["expires_at"] > time.time()
+    assert session.post_redirects == [False]
+    assert session.get_redirects == [False] * 5
 
 
 class ConcurrentRefreshSession(FakeSession):
-    async def post(self, url, data=None, headers=None):
+    async def post(self, url, data=None, headers=None, allow_redirects=True):
         self.posts.append((url, data, headers))
         await asyncio.sleep(0)
         return FakeResponse(
@@ -150,7 +156,7 @@ class ConcurrentUnauthorizedSession(FakeSession):
         self.old_token_gets = 0
         self.old_token_barrier = asyncio.Event()
 
-    async def get(self, url, headers=None):
+    async def get(self, url, headers=None, allow_redirects=True):
         assert headers is not None
         self.gets.append((url, headers))
         if headers["Authorization"] == "Bearer old-access":
@@ -248,7 +254,7 @@ async def test_empty_fence_target_is_rejected_before_transport():
 
 
 class MissingAccessTokenSession(FakeSession):
-    async def post(self, url, data=None, headers=None):
+    async def post(self, url, data=None, headers=None, allow_redirects=True):
         self.posts.append((url, data, headers))
         return FakeResponse(200, {"refresh_token": "PRIVATE_TOKEN_PAYLOAD_SENTINEL"})
 
@@ -263,6 +269,86 @@ async def test_token_success_without_access_token_is_sanitized_auth_error():
     assert "PRIVATE_TOKEN_PAYLOAD_SENTINEL" not in str(excinfo.value)
 
 
+class RedirectSession(FakeSession):
+    def __init__(self, status: int):
+        super().__init__()
+        self.status = status
+
+    async def get(self, url, headers=None, allow_redirects=True):
+        self.get_redirects.append(allow_redirects)
+        self.gets.append((url, headers))
+        return FakeResponse(self.status, {"location": "https://redirect.invalid"})
+
+    async def post(self, url, data=None, headers=None, allow_redirects=True):
+        self.post_redirects.append(allow_redirects)
+        self.posts.append((url, data, headers))
+        return FakeResponse(self.status, {"location": "https://redirect.invalid"})
+
+
+@pytest.mark.asyncio
+async def test_get_and_oauth_redirects_are_rejected_without_following():
+    get_session = RedirectSession(307)
+    get_client = _new_client(get_session)
+    get_client._access_token = "access"
+    get_client._expires_at = time.time() + 3600
+
+    with pytest.raises(HaloApiError, match="HTTP 307"):
+        await get_client.async_get("/pet/my")
+
+    assert len(get_session.gets) == 1
+    assert get_session.get_redirects == [False]
+
+    token_session = RedirectSession(308)
+    token_client = _new_client(token_session)
+    with pytest.raises(HaloApiError, match="HTTP 308"):
+        await token_client.async_login("user@example.com", "password", scope="openid")
+
+    assert len(token_session.posts) == 1
+    assert token_session.post_redirects == [False]
+
+
+class TokenPayloadSession(FakeSession):
+    def __init__(self, payload):
+        super().__init__()
+        self.response = FakeResponse(200, payload)
+
+    async def post(self, url, data=None, headers=None, allow_redirects=True):
+        self.post_redirects.append(allow_redirects)
+        self.posts.append((url, data, headers))
+        return self.response
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"access_token": 123, "refresh_token": "new-r", "expires_in": 3600},
+        {"access_token": "", "refresh_token": "new-r", "expires_in": 3600},
+        {"access_token": "new", "refresh_token": 123, "expires_in": 3600},
+        {"access_token": "new", "refresh_token": "", "expires_in": 3600},
+        {"access_token": "new", "refresh_token": "new-r"},
+        {"access_token": "new", "refresh_token": "new-r", "expires_in": "bad"},
+        {"access_token": "new", "refresh_token": "new-r", "expires_in": 0},
+        {"access_token": "new", "refresh_token": "new-r", "expires_in": float("inf")},
+        {"access_token": "new", "refresh_token": "new-r", "expires_in": True},
+    ],
+)
+async def test_malformed_token_success_is_atomic_and_released(payload):
+    session = TokenPayloadSession(payload)
+    client = _new_client(session)
+    client._access_token = "old-access"
+    client._refresh_token = "old-refresh"
+    client._expires_at = 4_102_444_800.0
+    before = client.token_snapshot
+
+    with pytest.raises(HaloApiError):
+        await client.async_login("user@example.com", "password", scope="openid")
+
+    assert client.token_snapshot == before
+    assert session.response.released is True
+    assert session.post_redirects == [False]
+
+
 class SequencedSession(FakeSession):
     """Session whose GETs walk through a scripted list; the last item repeats."""
 
@@ -270,7 +356,7 @@ class SequencedSession(FakeSession):
         super().__init__(token_status=token_status)
         self._get_results = list(get_results)
 
-    async def get(self, url, headers=None):
+    async def get(self, url, headers=None, allow_redirects=True):
         self.gets.append((url, headers))
         result = self._get_results.pop(0) if len(self._get_results) > 1 else self._get_results[0]
         if isinstance(result, Exception):
@@ -430,7 +516,7 @@ async def test_token_endpoint_outage_is_not_an_auth_error():
 
 
 class SensitiveTokenRejectionSession(FakeSession):
-    async def post(self, url, data=None, headers=None):
+    async def post(self, url, data=None, headers=None, allow_redirects=True):
         self.posts.append((url, data, headers))
         return FakeResponse(
             400,
@@ -455,7 +541,7 @@ async def test_token_rejection_does_not_echo_provider_payload_to_error_or_log(ca
 
 
 class SensitiveGetFailureSession(FakeSession):
-    async def get(self, url, headers=None):
+    async def get(self, url, headers=None, allow_redirects=True):
         self.gets.append((url, headers))
         return FakeResponse(418, {"detail": "PRIVATE_GET_BODY_SENTINEL"})
 
@@ -484,7 +570,7 @@ class StalledTokenBodySession(FakeSession):
         super().__init__()
         self.response = StalledTokenBodyResponse(200, {})
 
-    async def post(self, url, data=None, headers=None):
+    async def post(self, url, data=None, headers=None, allow_redirects=True):
         self.posts.append((url, data, headers))
         return self.response
 
@@ -511,7 +597,7 @@ class InvalidJsonTokenSession(FakeSession):
         super().__init__()
         self.response = InvalidJsonTokenResponse(status, "not-json")
 
-    async def post(self, url, data=None, headers=None):
+    async def post(self, url, data=None, headers=None, allow_redirects=True):
         self.posts.append((url, data, headers))
         return self.response
 

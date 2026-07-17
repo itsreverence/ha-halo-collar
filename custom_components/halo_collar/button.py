@@ -80,7 +80,8 @@ class HaloEnableFencesButton(HaloEntity, ButtonEntity):
         pet = self.pet
         stale_after = control_stale_after(self._entry)
         return (
-            collar is not None
+            super().available
+            and collar is not None
             and pet is not None
             and is_online(collar, stale_after=float(stale_after))
         )

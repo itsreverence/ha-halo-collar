@@ -13,6 +13,7 @@ REDACT_KEYS = frozenset(
         "client_secret",
         "password",
         "email",
+        "id",
         "token",
         "serialnumber",
         "latitude",

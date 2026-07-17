@@ -13,7 +13,9 @@ This checklist is for maintainers.
    uv run pytest -q
    uv run ruff check .
    uv run ruff format --check .
-   python -m compileall custom_components tests
+   python -m compileall custom_components tests scripts
+   uv build --out-dir dist
+   python scripts/verify_release_artifacts.py dist
    ```
 
 5. Confirm the GitHub `Lint` and `Validate` workflows pass for the exact release commit.
@@ -33,7 +35,7 @@ Use only original or properly licensed artwork. Do not copy Halo's trademarked l
 3. Confirm tagged `hacs.json`, `manifest.json`, local brand icon, and the source archive are publicly reachable.
 4. Install or update through HACS and restart Home Assistant.
 5. Confirm representative entities populate and compare important telemetry with the official Halo app.
-6. Confirm release artifacts, screenshots, logs, and diagnostics contain no credentials, pet names, serial numbers, locations, fences, or private account data.
+6. Confirm release artifacts, screenshots, logs, and diagnostics contain no credentials, pet names, serial numbers, locations, fences, provider IDs, or private account data. Home Assistant's private device/entity registries intentionally retain stable device identity and local display labels; protect those registries and backups as household data.
 
 ## HACS default submission
 

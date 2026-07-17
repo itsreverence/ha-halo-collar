@@ -168,7 +168,7 @@ class HaloApiClient:
             status, payload = await self._async_get_with_retry(path)
             if status == 401:
                 raise HaloAuthError(f"GET {path} unauthorized even after a token refresh")
-        if status >= 400:
+        if not 200 <= status < 300:
             raise HaloApiError(f"GET {path} failed: HTTP {status}")
         return payload
 
@@ -314,9 +314,10 @@ class HaloApiClient:
                     response = await self._session.get(
                         f"{self._api_base}{path}",
                         headers=self._headers(),
+                        allow_redirects=False,
                     )
                     status = response.status
-                    if status >= 400:
+                    if not 200 <= status < 300:
                         payload: Any = await response.text()
                     else:
                         payload = await response.json(content_type=None)
@@ -387,8 +388,11 @@ class HaloApiClient:
                     f"{self._auth_base}/connect/token",
                     data=data,
                     headers=self._token_headers(),
+                    allow_redirects=False,
                 )
                 await response.text()
+                if 300 <= response.status < 400:
+                    raise HaloApiError(f"Token endpoint returned HTTP {response.status}")
                 if response.status >= 500:
                     # Identity-server outage, not bad credentials; must not trigger reauth.
                     raise HaloApiError(f"Token endpoint error: HTTP {response.status}")
@@ -412,13 +416,24 @@ class HaloApiClient:
         if response.status >= 400:
             _LOGGER.warning("Halo token request rejected: HTTP %s", response.status)
             raise HaloAuthError(f"Token request failed: HTTP {response.status}")
-        if not isinstance(payload, dict) or "access_token" not in payload:
+        if not isinstance(payload, dict):
+            raise HaloApiError("Token request returned an invalid success payload")
+        access_token = payload.get("access_token")
+        refresh_token = payload.get("refresh_token", self._refresh_token)
+        expires_in = payload.get("expires_in")
+        if not isinstance(access_token, str) or not access_token:
             raise HaloAuthError("Token request returned no access_token")
-        self._access_token = payload["access_token"]
-        self._refresh_token = payload.get("refresh_token", self._refresh_token)
-        self._expires_at = (
-            time.time() + int(payload.get("expires_in", 0)) - TOKEN_REFRESH_SKEW_SECONDS
-        )
+        if not isinstance(refresh_token, str) or not refresh_token:
+            raise HaloApiError("Token request returned an invalid refresh_token")
+        if isinstance(expires_in, bool) or not isinstance(expires_in, (int, float)):
+            raise HaloApiError("Token request returned an invalid expires_in")
+        if not math.isfinite(float(expires_in)) or expires_in <= TOKEN_REFRESH_SKEW_SECONDS:
+            raise HaloApiError("Token request returned an invalid expires_in")
+
+        # Commit the fully validated token set atomically.
+        self._access_token = access_token
+        self._refresh_token = refresh_token
+        self._expires_at = time.time() + float(expires_in) - TOKEN_REFRESH_SKEW_SECONDS
 
     def _headers(self) -> dict[str, str]:
         return {

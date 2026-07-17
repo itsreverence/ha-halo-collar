@@ -44,4 +44,4 @@ class HaloEntity(CoordinatorEntity):
 
     @property
     def available(self) -> bool:
-        return self.collar is not None
+        return super().available and self.collar is not None

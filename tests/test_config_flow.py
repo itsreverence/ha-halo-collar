@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+# Home Assistant is intentionally checked before its optional test dependencies.
+# ruff: noqa: E402, I001
+
 from unittest.mock import AsyncMock, patch
 
 import pytest
-import voluptuous as vol
 
 pytest.importorskip("homeassistant")
+
+import voluptuous as vol
 
 from homeassistant import config_entries
 from homeassistant.const import CONF_NAME

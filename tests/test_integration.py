@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
@@ -17,6 +18,7 @@ from pytest_homeassistant_custom_component.common import (
     async_fire_time_changed,
 )
 
+from custom_components.halo_collar import async_unload_entry
 from custom_components.halo_collar.api import HaloApiError, HaloAuthError, HaloState
 from custom_components.halo_collar.const import (
     CONF_ACCESS_TOKEN,
@@ -31,7 +33,10 @@ from custom_components.halo_collar.const import (
     CONF_STALE_AFTER,
     DOMAIN,
 )
-from custom_components.halo_collar.controls import control_lock_for
+from custom_components.halo_collar.controls import (
+    control_lock_for,
+    find_collar_cooldowns_for,
+)
 from custom_components.halo_collar.diagnostics import async_get_config_entry_diagnostics
 
 
@@ -75,6 +80,18 @@ class FailingHaloClient(FakeHaloClient):
     async def async_fetch_state(self):
         self.fetches += 1
         raise self.error
+
+
+class ToggleFailureClient(FakeHaloClient):
+    def __init__(self, state):
+        super().__init__(state)
+        self.error: Exception | None = None
+
+    async def async_fetch_state(self):
+        self.fetches += 1
+        if self.error is not None:
+            raise self.error
+        return self.state
 
 
 def _complete_issues(status: str = "noIssue") -> dict:
@@ -177,6 +194,22 @@ def _state(*, indoors: bool = False, walks: list[dict] | None = None):
         server_time=timestamp,
         walks=[] if walks is None else walks,
     )
+
+
+def _state_with_second_collar():
+    state = _state()
+    pet = deepcopy(state.pets[0])
+    pet["id"] = "pet-2"
+    pet["name"] = "Synthetic Two"
+    pet["collarInfo"]["id"] = "collar-2"
+    collar = deepcopy(state.collars[0])
+    collar["id"] = "collar-2"
+    collar["serialNumber"] = "serial-2"
+    collar["petInfo"]["id"] = "pet-2"
+    collar["petInfo"]["name"] = "Synthetic Two"
+    state.pets.append(pet)
+    state.collars.append(collar)
+    return state
 
 
 def _entry(options):
@@ -535,6 +568,12 @@ async def test_diagnostics_omits_walk_history_and_private_walk_sentinels(hass):
         "private_user_id",
         "private_feedback_sentinel",
         "private_nested_sentinel",
+        "pet-1",
+        "collar-1",
+        "serial-1",
+        "synthetic fence",
+        "cowboy",
+        "excluded",
     ):
         assert sentinel not in serialized
 
@@ -819,6 +858,170 @@ async def test_runtime_manual_unload_and_setup_reuses_lock_and_entity_ids(hass):
     await _setup(hass, entry, client)
     assert control_lock_for(hass.data[DOMAIN], entry.entry_id) is original_lock
     assert registered_entities() == before
+
+
+async def test_failed_unload_retains_runtime_and_control_state(hass):
+    client = FakeHaloClient(_state())
+    entry = _entry({CONF_ENABLE_FIND_COLLAR: True})
+    entry.add_to_hass(hass)
+    await _setup(hass, entry, client)
+    domain_data = hass.data[DOMAIN]
+    stored = domain_data[entry.entry_id]
+    original_lock = control_lock_for(domain_data, entry.entry_id)
+    cooldowns = find_collar_cooldowns_for(domain_data, entry.entry_id)
+    cooldowns["collar-1"] = 123.0
+
+    with patch.object(
+        hass.config_entries,
+        "async_unload_platforms",
+        AsyncMock(return_value=False),
+    ):
+        assert await async_unload_entry(hass, entry) is False
+
+    assert domain_data[entry.entry_id] is stored
+    assert control_lock_for(domain_data, entry.entry_id) is original_lock
+    assert find_collar_cooldowns_for(domain_data, entry.entry_id) == {"collar-1": 123.0}
+
+
+async def test_permanent_config_entry_removal_clears_control_state(hass):
+    client = FakeHaloClient(_state())
+    entry = _entry({CONF_ENABLE_FIND_COLLAR: True})
+    entry.add_to_hass(hass)
+    await _setup(hass, entry, client)
+    domain_data = hass.data[DOMAIN]
+    control_lock_for(domain_data, entry.entry_id)
+    find_collar_cooldowns_for(domain_data, entry.entry_id)["collar-1"] = 123.0
+
+    assert await hass.config_entries.async_remove(entry.entry_id) == {"require_restart": False}
+    await hass.async_block_till_done()
+
+    assert entry.entry_id not in domain_data.get("_control_locks", {})
+    assert entry.entry_id not in domain_data.get("_find_collar_cooldowns", {})
+
+
+async def test_runtime_failure_marks_entities_and_controls_unavailable_until_recovery(hass):
+    client = ToggleFailureClient(_state())
+    entry = _entry(
+        {
+            CONF_ENABLE_FENCE_CONTROLS: True,
+            CONF_ALLOW_FENCE_DISABLE: True,
+            CONF_ENABLE_FIND_COLLAR: True,
+        }
+    )
+    entry.add_to_hass(hass)
+    await _setup(hass, entry, client)
+    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    registry = er.async_get(hass)
+    tracked = [
+        ("sensor", "collar-1_battery"),
+        ("binary_sensor", "collar-1_online"),
+        ("device_tracker", "collar-1_pet_tracker"),
+        ("event", "collar-1_fence_breach_event"),
+        ("button", "collar-1_enable_fences"),
+        ("button", "collar-1_find_collar"),
+        ("switch", "collar-1_fence_mode"),
+    ]
+    entity_ids = [
+        registry.async_get_entity_id(platform, DOMAIN, unique_id) for platform, unique_id in tracked
+    ]
+    assert all(entity_ids)
+
+    client.error = HaloApiError("synthetic outage")
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+
+    assert coordinator.last_update_success is False
+    assert all(hass.states.get(entity_id).state == STATE_UNAVAILABLE for entity_id in entity_ids)
+
+    client.error = None
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+
+    assert coordinator.last_update_success is True
+    assert all(hass.states.get(entity_id).state != STATE_UNAVAILABLE for entity_id in entity_ids)
+
+
+async def test_new_collar_reload_preserves_existing_ids_and_restores_removed_collar(hass):
+    client = FakeHaloClient(_state())
+    entry = _entry(
+        {
+            CONF_ENABLE_FENCE_CONTROLS: True,
+            CONF_ALLOW_FENCE_DISABLE: True,
+            CONF_ENABLE_FIND_COLLAR: True,
+        }
+    )
+    entry.add_to_hass(hass)
+    await _setup(hass, entry, client)
+    registry = er.async_get(hass)
+
+    def registered_entities():
+        return {
+            item.unique_id: item.entity_id
+            for item in registry.entities.values()
+            if item.config_entry_id == entry.entry_id
+        }
+
+    existing = registered_entities()
+    client.state = _state_with_second_collar()
+    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    with patch("custom_components.halo_collar.api.HaloApiClient", return_value=client):
+        await coordinator.async_refresh()
+        await hass.async_block_till_done()
+
+    assert entry.state is ConfigEntryState.LOADED
+    after_add = registered_entities()
+    assert all(after_add[key] == entity_id for key, entity_id in existing.items())
+    second_collar_entities = [
+        ("sensor", "collar-2_battery"),
+        ("binary_sensor", "collar-2_online"),
+        ("device_tracker", "collar-2_pet_tracker"),
+        ("event", "collar-2_fence_breach_event"),
+        ("button", "collar-2_enable_fences"),
+        ("button", "collar-2_find_collar"),
+        ("switch", "collar-2_fence_mode"),
+    ]
+    second_ids = [
+        registry.async_get_entity_id(platform, DOMAIN, unique_id)
+        for platform, unique_id in second_collar_entities
+    ]
+    assert all(second_ids)
+    assert all(hass.states.get(entity_id).state != STATE_UNAVAILABLE for entity_id in second_ids)
+
+    client.state = _state()
+    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+    assert all(hass.states.get(entity_id).state == STATE_UNAVAILABLE for entity_id in second_ids)
+
+    client.state = _state_with_second_collar()
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+    assert all(hass.states.get(entity_id).state != STATE_UNAVAILABLE for entity_id in second_ids)
+    assert registered_entities() == after_add
+
+
+async def test_runtime_expiry_only_token_renewal_is_persisted_without_reload(hass):
+    client = FakeHaloClient(_state())
+    entry = _entry({})
+    entry.add_to_hass(hass)
+    await _setup(hass, entry, client)
+    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    renewed_expiry = entry.data[CONF_EXPIRES_AT] + 600
+    client._snapshot = {
+        "access_token": entry.data[CONF_ACCESS_TOKEN],
+        "refresh_token": entry.data[CONF_REFRESH_TOKEN],
+        "expires_at": renewed_expiry,
+    }
+
+    reload_mock = AsyncMock()
+    with patch.object(hass.config_entries, "async_reload", reload_mock):
+        await coordinator.async_refresh()
+        await hass.async_block_till_done()
+
+    assert entry.data[CONF_EXPIRES_AT] == renewed_expiry
+    assert entry.data[CONF_ACCESS_TOKEN] == "access"
+    assert entry.data[CONF_REFRESH_TOKEN] == "refresh"
+    reload_mock.assert_not_awaited()
 
 
 @pytest.mark.parametrize(

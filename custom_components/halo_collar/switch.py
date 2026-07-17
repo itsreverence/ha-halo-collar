@@ -51,7 +51,8 @@ class HaloFenceModeSwitch(HaloEntity, SwitchEntity):
         collar = self.collar
         pet = self.pet
         return (
-            collar is not None
+            super().available
+            and collar is not None
             and pet is not None
             and pet_fences_enabled(pet) is not None
             and pet.get("isFencesSynchronized") is True

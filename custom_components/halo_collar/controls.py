@@ -167,8 +167,12 @@ async def _async_dispatch_and_reconcile(
         )
 
 
-async def _async_finish_committed_phase(coro: Coroutine[Any, Any, None]) -> None:
-    """Finish dispatch/reconciliation before propagating caller cancellation."""
+async def _async_finish_committed_phase(
+    coro: Coroutine[Any, Any, None],
+    *,
+    dispatch_committed: Callable[[], bool],
+) -> None:
+    """Cancel safely before dispatch, or finish a committed transaction."""
     task = asyncio.create_task(coro)
     cancelled = False
     while True:
@@ -177,6 +181,13 @@ async def _async_finish_committed_phase(coro: Coroutine[Any, Any, None]) -> None
             break
         except asyncio.CancelledError:
             cancelled = True
+            if not dispatch_committed():
+                task.cancel()
+                try:
+                    await task
+                except BaseException:
+                    pass
+                raise
             if task.done():
                 break
         except Exception as err:
@@ -228,8 +239,10 @@ async def async_set_fence_mode(
         )
         pet_id = pet["id"]
         collar_id = collar["id"]
+        dispatch_committed = False
 
         def validate_dispatch_boundary() -> None:
+            nonlocal dispatch_committed
             _validate_options(entry, enabled=enabled)
             _validate_snapshot(
                 state_getter,
@@ -238,6 +251,7 @@ async def async_set_fence_mode(
                 expected_pet_id=pet_id,
                 expected_collar_id=collar_id,
             )
+            dispatch_committed = True
 
         # Options and live state can change while preflight or OAuth refresh is
         # in flight. Recheck the exact target and all safety gates immediately
@@ -253,7 +267,8 @@ async def async_set_fence_mode(
                 enabled=enabled,
                 stale_after_getter=current_strictest_stale_after,
                 pre_dispatch=validate_dispatch_boundary,
-            )
+            ),
+            dispatch_committed=lambda: dispatch_committed,
         )
 
 
@@ -367,8 +382,10 @@ async def async_find_collar(
         pet_id = pet["id"]
         collar_id = collar["id"]
         _ensure_find_cooldown_clear(cooldowns, collar_id)
+        dispatch_committed = False
 
         def validate_and_commit_dispatch() -> None:
+            nonlocal dispatch_committed
             _validate_find_options(entry)
             _validate_find_snapshot(
                 state_getter,
@@ -380,6 +397,7 @@ async def async_find_collar(
             # Start the cooldown before transport dispatch. Even if transport
             # fails immediately, the collar may have received the command.
             cooldowns[collar_id] = time.monotonic()
+            dispatch_committed = True
 
         await _async_finish_committed_phase(
             _async_dispatch_find_and_refresh(
@@ -387,5 +405,6 @@ async def async_find_collar(
                 client=client,
                 collar_id=collar_id,
                 pre_dispatch=validate_and_commit_dispatch,
-            )
+            ),
+            dispatch_committed=lambda: dispatch_committed,
         )
