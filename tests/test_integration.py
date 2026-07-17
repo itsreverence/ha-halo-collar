@@ -662,6 +662,35 @@ async def test_runtime_reload_preserves_domain_lock_and_revokes_disable_surface(
     assert client.writes == []
 
 
+async def test_runtime_find_option_reload_adds_button_and_preserves_lock(hass):
+    client = FakeHaloClient(_state())
+    entry = _entry({CONF_ENABLE_FIND_COLLAR: False})
+    entry.add_to_hass(hass)
+    await _setup(hass, entry, client)
+
+    collar_id = client.state.collars[0]["id"]
+    unique_id = f"{collar_id}_find_collar"
+    assert er.async_get(hass).async_get_entity_id("button", DOMAIN, unique_id) is None
+    original_lock = control_lock_for(hass.data[DOMAIN], entry.entry_id)
+
+    with patch(
+        "custom_components.halo_collar.api.HaloApiClient",
+        return_value=client,
+    ):
+        hass.config_entries.async_update_entry(
+            entry,
+            options={**entry.options, CONF_ENABLE_FIND_COLLAR: True},
+        )
+        await hass.async_block_till_done()
+
+    assert entry.state is ConfigEntryState.LOADED
+    assert control_lock_for(hass.data[DOMAIN], entry.entry_id) is original_lock
+    entity_id = er.async_get(hass).async_get_entity_id("button", DOMAIN, unique_id)
+    assert entity_id == "button.cowboy_find_collar_sound_and_light"
+    assert hass.states.get(entity_id).state != STATE_UNAVAILABLE
+    assert client.finds == []
+
+
 async def test_runtime_manual_unload_and_setup_reuses_lock(hass):
     client = FakeHaloClient(_state())
     entry = _entry({})

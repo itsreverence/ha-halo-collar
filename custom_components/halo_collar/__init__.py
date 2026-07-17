@@ -9,6 +9,7 @@ from .const import (
     CONF_CLIENT_ID,
     CONF_CLIENT_SECRET,
     CONF_ENABLE_FENCE_CONTROLS,
+    CONF_ENABLE_FIND_COLLAR,
     CONF_EXPIRES_AT,
     CONF_REFRESH_TOKEN,
     CONF_SCAN_INTERVAL,
@@ -28,9 +29,10 @@ def _scan_interval(entry) -> timedelta:
     return timedelta(seconds=int(seconds))
 
 
-def _controls_signature(entry) -> tuple[bool, bool]:
+def _controls_signature(entry) -> tuple[bool, bool, bool]:
     return (
         bool(entry.options.get(CONF_ENABLE_FENCE_CONTROLS, False)),
+        bool(entry.options.get(CONF_ENABLE_FIND_COLLAR, False)),
         bool(entry.options.get(CONF_ALLOW_FENCE_DISABLE, False)),
     )
 
