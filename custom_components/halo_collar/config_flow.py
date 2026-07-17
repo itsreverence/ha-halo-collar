@@ -17,6 +17,7 @@ from .const import (
     CONF_CLIENT_SECRET,
     CONF_EMAIL,
     CONF_ENABLE_FENCE_CONTROLS,
+    CONF_ENABLE_FIND_COLLAR,
     CONF_EXPIRES_AT,
     CONF_PASSWORD,
     CONF_REFRESH_TOKEN,
@@ -28,6 +29,7 @@ from .const import (
     DEFAULT_CLIENT_ID,
     DEFAULT_CLIENT_SECRET,
     DEFAULT_ENABLE_FENCE_CONTROLS,
+    DEFAULT_ENABLE_FIND_COLLAR,
     DEFAULT_SCAN_INTERVAL_SECONDS,
     DEFAULT_STALE_AFTER_SECONDS,
     DEFAULT_TOKEN_SCOPE,
@@ -186,6 +188,10 @@ class HaloCollarOptionsFlow(config_entries.OptionsFlow):
                         default=options.get(
                             CONF_ENABLE_FENCE_CONTROLS, DEFAULT_ENABLE_FENCE_CONTROLS
                         ),
+                    ): bool,
+                    vol.Required(
+                        CONF_ENABLE_FIND_COLLAR,
+                        default=options.get(CONF_ENABLE_FIND_COLLAR, DEFAULT_ENABLE_FIND_COLLAR),
                     ): bool,
                     vol.Required(
                         CONF_ALLOW_FENCE_DISABLE,

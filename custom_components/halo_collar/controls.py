@@ -1,18 +1,28 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from asyncio import Lock
 from collections.abc import Callable, Coroutine
 from typing import Any
 
-from .api import HaloWriteOutcomeUnknown
+from .api import HaloCollarNotFound, HaloWriteOutcomeUnknown
 from .const import (
     CONF_ALLOW_FENCE_DISABLE,
     CONF_ENABLE_FENCE_CONTROLS,
+    CONF_ENABLE_FIND_COLLAR,
     CONF_STALE_AFTER,
     DEFAULT_STALE_AFTER_SECONDS,
+    FIND_COLLAR_COOLDOWN_SECONDS,
 )
-from .helpers import fence_disable_block_reason, is_online, pet_fences_enabled
+from .helpers import (
+    fence_disable_block_reason,
+    has_active_walk,
+    is_online,
+    nested,
+    pet_fences_enabled,
+    subscription_feature_enabled,
+)
 
 
 class HaloControlError(Exception):
@@ -26,6 +36,7 @@ def control_stale_after(entry) -> float:
 
 
 _CONTROL_LOCKS = "_control_locks"
+_FIND_COLLAR_COOLDOWNS = "_find_collar_cooldowns"
 
 
 def control_lock_for(domain_data: dict[str, Any], entry_id: str) -> Lock:
@@ -34,10 +45,26 @@ def control_lock_for(domain_data: dict[str, Any], entry_id: str) -> Lock:
     return locks.setdefault(entry_id, Lock())
 
 
+def find_collar_cooldowns_for(domain_data: dict[str, Any], entry_id: str) -> dict[str, float]:
+    """Return reload-stable dispatch timestamps for one config entry."""
+    entries = domain_data.setdefault(_FIND_COLLAR_COOLDOWNS, {})
+    return entries.setdefault(entry_id, {})
+
+
+def find_collar_cooldown_remaining(cooldowns: dict[str, float], collar_id: str) -> float:
+    """Return seconds remaining in the conservative post-dispatch cooldown."""
+    dispatched_at = cooldowns.get(collar_id)
+    if dispatched_at is None:
+        return 0.0
+    return max(0.0, dispatched_at + FIND_COLLAR_COOLDOWN_SECONDS - time.monotonic())
+
+
 def remove_control_lock(domain_data: dict[str, Any], entry_id: str) -> None:
-    """Drop a lock only when its config entry is permanently removed."""
+    """Drop control runtime state only when its config entry is permanently removed."""
     locks = domain_data.get(_CONTROL_LOCKS, {})
     locks.pop(entry_id, None)
+    cooldown_entries = domain_data.get(_FIND_COLLAR_COOLDOWNS, {})
+    cooldown_entries.pop(entry_id, None)
 
 
 def _validate_options(entry, *, enabled: bool) -> None:
@@ -226,5 +253,139 @@ async def async_set_fence_mode(
                 enabled=enabled,
                 stale_after_getter=current_strictest_stale_after,
                 pre_dispatch=validate_dispatch_boundary,
+            )
+        )
+
+
+def _validate_find_options(entry) -> None:
+    if not entry.options.get(CONF_ENABLE_FIND_COLLAR, False):
+        raise HaloControlError("Halo Find Collar is disabled in integration options")
+
+
+def _ensure_find_cooldown_clear(cooldowns: dict[str, float], collar_id: str) -> None:
+    remaining = find_collar_cooldown_remaining(cooldowns, collar_id)
+    if remaining > 0:
+        raise HaloControlError(f"Halo Find Collar cooldown has {remaining:.0f} seconds remaining")
+
+
+def _validate_find_snapshot(
+    state_getter: Callable[
+        [], tuple[dict[str, Any] | None, dict[str, Any] | None, dict[str, Any] | None]
+    ],
+    *,
+    stale_after: float,
+    expected_pet_id: str | None = None,
+    expected_collar_id: str | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Fail closed unless Find Collar is safe for one exact current mapping."""
+    pet, collar, subscription = state_getter()
+    if pet is None or collar is None:
+        raise HaloControlError("Halo pet/collar mapping is unavailable")
+    pet_id = pet.get("id")
+    collar_id = collar.get("id")
+    if not isinstance(pet_id, str) or not pet_id or not isinstance(collar_id, str) or not collar_id:
+        raise HaloControlError("Halo pet/collar mapping is unavailable")
+    if nested(collar, "petInfo", "id") != pet_id or nested(pet, "collarInfo", "id") != collar_id:
+        raise HaloControlError("Halo pet/collar mapping is unavailable")
+    if expected_pet_id is not None and pet_id != expected_pet_id:
+        raise HaloControlError("Halo pet/collar mapping changed before command dispatch")
+    if expected_collar_id is not None and collar_id != expected_collar_id:
+        raise HaloControlError("Halo pet/collar mapping changed before command dispatch")
+    if not is_online(collar, stale_after=stale_after):
+        raise HaloControlError("Halo collar telemetry is stale")
+    if has_active_walk(pet, collar):
+        raise HaloControlError("Find Collar is blocked during an active or unknown walk")
+    if not subscription_feature_enabled(subscription, "findcollar"):
+        raise HaloControlError("Halo subscription does not enable Find Collar")
+    return pet, collar
+
+
+async def _async_dispatch_find_and_refresh(
+    *,
+    coordinator,
+    client,
+    collar_id: str,
+    pre_dispatch,
+) -> None:
+    try:
+        await client.async_find_collar(collar_id, pre_dispatch=pre_dispatch)
+    except HaloCollarNotFound as err:
+        await coordinator.async_refresh()
+        raise HaloControlError(
+            "Halo collar was not found; the physical command was not repeated"
+        ) from err
+    except HaloWriteOutcomeUnknown as err:
+        await coordinator.async_refresh()
+        raise HaloControlError(
+            "Halo Find Collar outcome is unknown; do not retry until the cooldown expires"
+        ) from err
+
+    # Halo exposes no durable sound/light confirmation field. Refresh only to
+    # restore the newest telemetry while retaining the provider's success result.
+    await coordinator.async_refresh()
+
+
+async def async_find_collar(
+    *,
+    coordinator,
+    client,
+    entry,
+    control_lock: Lock,
+    cooldowns: dict[str, float],
+    state_getter: Callable[
+        [], tuple[dict[str, Any] | None, dict[str, Any] | None, dict[str, Any] | None]
+    ],
+) -> None:
+    """Execute one serialized, at-most-once Return Whistle transaction."""
+    async with control_lock:
+        _validate_find_options(entry)
+
+        # A stale pre-refresh snapshot is never authorization, but it can safely
+        # reject a repeat without another provider call.
+        _pet, existing_collar, _subscription = state_getter()
+        if existing_collar is not None and isinstance(existing_collar.get("id"), str):
+            _ensure_find_cooldown_clear(cooldowns, existing_collar["id"])
+
+        await coordinator.async_refresh()
+        if not coordinator.last_update_success:
+            raise HaloControlError("Could not refresh Halo state before finding the collar")
+
+        strictest_stale_after = control_stale_after(entry)
+
+        def current_strictest_stale_after() -> float:
+            nonlocal strictest_stale_after
+            strictest_stale_after = min(
+                strictest_stale_after,
+                control_stale_after(entry),
+            )
+            return strictest_stale_after
+
+        pet, collar = _validate_find_snapshot(
+            state_getter,
+            stale_after=strictest_stale_after,
+        )
+        pet_id = pet["id"]
+        collar_id = collar["id"]
+        _ensure_find_cooldown_clear(cooldowns, collar_id)
+
+        def validate_and_commit_dispatch() -> None:
+            _validate_find_options(entry)
+            _validate_find_snapshot(
+                state_getter,
+                stale_after=current_strictest_stale_after(),
+                expected_pet_id=pet_id,
+                expected_collar_id=collar_id,
+            )
+            _ensure_find_cooldown_clear(cooldowns, collar_id)
+            # Start the cooldown before transport dispatch. Even if transport
+            # fails immediately, the collar may have received the command.
+            cooldowns[collar_id] = time.monotonic()
+
+        await _async_finish_committed_phase(
+            _async_dispatch_find_and_refresh(
+                coordinator=coordinator,
+                client=client,
+                collar_id=collar_id,
+                pre_dispatch=validate_and_commit_dispatch,
             )
         )

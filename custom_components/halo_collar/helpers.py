@@ -147,6 +147,46 @@ def pet_for_collar(
     return pet_match
 
 
+def subscription_feature_enabled(subscription: Any, feature_id: str) -> bool:
+    """Fail closed unless exactly one subscription feature is explicitly enabled."""
+    if not isinstance(subscription, dict) or not isinstance(feature_id, str):
+        return False
+    features = subscription.get("features")
+    if not isinstance(features, list):
+        return False
+
+    def _feature_identifiers(feature: Any) -> tuple[set[str], bool]:
+        """Return normalized identifiers and whether their envelope conflicts."""
+        if not isinstance(feature, dict):
+            return set(), False
+        identifiers: list[str] = []
+        malformed = False
+        if "id" in feature:
+            if isinstance(feature["id"], str):
+                identifiers.append(feature["id"])
+            else:
+                malformed = True
+        if "featureType" in feature:
+            feature_type = feature["featureType"]
+            if isinstance(feature_type, dict) and isinstance(feature_type.get("id"), str):
+                identifiers.append(feature_type["id"])
+            else:
+                malformed = True
+        normalized_ids = {identifier.casefold() for identifier in identifiers}
+        return normalized_ids, malformed or len(normalized_ids) > 1
+
+    normalized = feature_id.casefold()
+    matches = []
+    for feature in features:
+        identifiers, conflicting = _feature_identifiers(feature)
+        if normalized not in identifiers:
+            continue
+        if conflicting:
+            return False
+        matches.append(feature)
+    return len(matches) == 1 and matches[0].get("isEnabled") is True
+
+
 def pet_fences_enabled(pet: dict[str, Any] | None) -> bool | None:
     """Return only the collar-reported fence mode, never desired state."""
     reported = nested(pet or {}, "telemetry", "mode", "fencesOn")

@@ -6,18 +6,26 @@ from types import SimpleNamespace
 
 import pytest
 
-from custom_components.halo_collar.api import HaloWriteOutcomeUnknown
+from custom_components.halo_collar.api import (
+    HaloCollarNotFound,
+    HaloWriteOutcomeUnknown,
+)
 from custom_components.halo_collar.const import (
     CONF_ALLOW_FENCE_DISABLE,
     CONF_ENABLE_FENCE_CONTROLS,
+    CONF_ENABLE_FIND_COLLAR,
     CONF_STALE_AFTER,
 )
 from custom_components.halo_collar.controls import (
     HaloControlError,
+    async_find_collar,
     async_set_fence_mode,
     control_lock_for,
+    find_collar_cooldown_remaining,
+    find_collar_cooldowns_for,
     remove_control_lock,
 )
+from custom_components.halo_collar.helpers import subscription_feature_enabled
 
 
 def _collar(*, fresh: bool = True, walk=None, timestamp=None):
@@ -547,3 +555,424 @@ async def test_contradictory_transactions_share_one_collar_lock():
 
     assert coordinator.refreshes == 2
     assert client.writes == [("pet-1", True)]
+
+
+# Find Collar is a physical Return Whistle command, not a telemetry probe.
+def _subscription(*, enabled=True, duplicate=False):
+    feature = {"featureType": {"id": "findcollar"}, "isEnabled": enabled}
+    features = [feature, dict(feature)] if duplicate else [feature]
+    return {"features": features}
+
+
+class FakeFindClient:
+    def __init__(self):
+        self.writes = []
+
+    async def async_find_collar(self, collar_id, *, pre_dispatch=None):
+        if pre_dispatch is not None:
+            pre_dispatch()
+        self.writes.append(collar_id)
+
+
+class MutatingFindClient(FakeFindClient):
+    def __init__(self, mutate):
+        super().__init__()
+        self.mutate = mutate
+
+    async def async_find_collar(self, collar_id, *, pre_dispatch=None):
+        self.mutate()
+        await super().async_find_collar(collar_id, pre_dispatch=pre_dispatch)
+
+
+class UnknownFindClient(FakeFindClient):
+    async def async_find_collar(self, collar_id, *, pre_dispatch=None):
+        await super().async_find_collar(collar_id, pre_dispatch=pre_dispatch)
+        raise HaloWriteOutcomeUnknown("simulated ambiguous find outcome")
+
+
+class NotFoundFindClient(FakeFindClient):
+    async def async_find_collar(self, collar_id, *, pre_dispatch=None):
+        await super().async_find_collar(collar_id, pre_dispatch=pre_dispatch)
+        raise HaloCollarNotFound("Halo collar was not found")
+
+
+class BlockingFindClient(FakeFindClient):
+    def __init__(self):
+        super().__init__()
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def async_find_collar(self, collar_id, *, pre_dispatch=None):
+        if pre_dispatch is not None:
+            pre_dispatch()
+        self.writes.append(collar_id)
+        self.started.set()
+        await self.release.wait()
+
+
+def _find_entry(*, enabled=True):
+    entry = _entry()
+    entry.options[CONF_ENABLE_FIND_COLLAR] = enabled
+    return entry
+
+
+async def _execute_find(
+    coordinator,
+    client,
+    entry,
+    *,
+    control_lock=None,
+    cooldowns=None,
+):
+    await async_find_collar(
+        coordinator=coordinator,
+        client=client,
+        entry=entry,
+        control_lock=control_lock or asyncio.Lock(),
+        cooldowns={} if cooldowns is None else cooldowns,
+        state_getter=lambda: coordinator.state,
+    )
+
+
+def test_find_collar_entitlement_requires_one_enabled_exact_feature():
+    assert subscription_feature_enabled(_subscription(), "findcollar") is True
+    assert (
+        subscription_feature_enabled(
+            {"features": [{"id": "findcollar", "isEnabled": True}]},
+            "findcollar",
+        )
+        is True
+    )
+    assert (
+        subscription_feature_enabled(
+            {
+                "features": [
+                    {
+                        "id": "findcollar",
+                        "featureType": {"id": "findcollar"},
+                        "isEnabled": True,
+                    }
+                ]
+            },
+            "findcollar",
+        )
+        is True
+    )
+    assert (
+        subscription_feature_enabled(
+            {
+                "features": [
+                    {
+                        "id": "findcollar",
+                        "featureType": {"id": "other"},
+                        "isEnabled": True,
+                    }
+                ]
+            },
+            "findcollar",
+        )
+        is False
+    )
+    assert subscription_feature_enabled(_subscription(enabled=False), "findcollar") is False
+    assert subscription_feature_enabled(_subscription(duplicate=True), "findcollar") is False
+    assert (
+        subscription_feature_enabled(
+            {
+                "features": [
+                    {"id": "findcollar", "isEnabled": True},
+                    {"id": "findcollar", "isEnabled": True},
+                ]
+            },
+            "findcollar",
+        )
+        is False
+    )
+    assert (
+        subscription_feature_enabled(
+            {
+                "features": [
+                    {"id": "findcollar", "isEnabled": True},
+                    {
+                        "id": "findcollar",
+                        "featureType": {"id": "other"},
+                        "isEnabled": True,
+                    },
+                ]
+            },
+            "findcollar",
+        )
+        is False
+    )
+    assert (
+        subscription_feature_enabled(
+            {
+                "features": [
+                    {"id": "findcollar", "isEnabled": True},
+                    {
+                        "id": "findcollar",
+                        "featureType": "malformed",
+                        "isEnabled": True,
+                    },
+                ]
+            },
+            "findcollar",
+        )
+        is False
+    )
+    assert subscription_feature_enabled({"features": "malformed"}, "findcollar") is False
+    assert subscription_feature_enabled({}, "findcollar") is False
+
+
+def test_find_collar_cooldown_state_survives_reload_and_is_removed_with_entry():
+    domain_data = {}
+    original = find_collar_cooldowns_for(domain_data, "entry-1")
+    original["collar-1"] = 10.0
+
+    assert find_collar_cooldowns_for(domain_data, "entry-1") is original
+
+    remove_control_lock(domain_data, "entry-1")
+    assert find_collar_cooldowns_for(domain_data, "entry-1") is not original
+
+
+@pytest.mark.asyncio
+async def test_find_collar_requires_dedicated_opt_in_before_refresh_or_write():
+    coordinator = FakeCoordinator([(_pet(), _collar(), _subscription())])
+    client = FakeFindClient()
+
+    with pytest.raises(HaloControlError, match="disabled in integration options"):
+        await _execute_find(coordinator, client, _find_entry(enabled=False))
+
+    assert coordinator.refreshes == 0
+    assert client.writes == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("pet", "collar", "subscription", "message"),
+    [
+        (_pet(), _collar(fresh=False), _subscription(), "stale"),
+        (_pet(walk={"id": "walk-1"}), _collar(walk={"id": "walk-1"}), _subscription(), "active"),
+        (_pet(walk="malformed"), _collar(walk="malformed"), _subscription(), "active"),
+        (_pet() | {"id": 123}, _collar(), _subscription(), "mapping"),
+        (_pet(), _collar() | {"id": []}, _subscription(), "mapping"),
+        (_pet(), _collar() | {"id": ""}, _subscription(), "mapping"),
+        (_pet() | {"id": "pet-2"}, _collar(), _subscription(), "mapping"),
+        (_pet(), _collar(), _subscription(enabled=False), "subscription"),
+        (_pet(), _collar(), _subscription(duplicate=True), "subscription"),
+    ],
+)
+async def test_find_collar_fails_closed_after_fresh_read(pet, collar, subscription, message):
+    coordinator = FakeCoordinator([(pet, collar, subscription)])
+    client = FakeFindClient()
+
+    with pytest.raises(HaloControlError, match=message):
+        await _execute_find(coordinator, client, _find_entry())
+
+    assert coordinator.refreshes == 1
+    assert client.writes == []
+
+
+@pytest.mark.asyncio
+async def test_find_collar_dispatches_once_refreshes_and_starts_cooldown(monkeypatch):
+    now = 1_000.0
+    monkeypatch.setattr("custom_components.halo_collar.controls.time.monotonic", lambda: now)
+    coordinator = FakeCoordinator(
+        [
+            (_pet(), _collar(), _subscription()),
+            (_pet(), _collar(), _subscription()),
+        ]
+    )
+    client = FakeFindClient()
+    cooldowns = {}
+
+    await _execute_find(coordinator, client, _find_entry(), cooldowns=cooldowns)
+
+    assert client.writes == ["collar-1"]
+    assert coordinator.refreshes == 2
+    assert find_collar_cooldown_remaining(cooldowns, "collar-1") == 60.0
+
+
+@pytest.mark.asyncio
+async def test_find_collar_cooldown_blocks_repeat_before_refresh(monkeypatch):
+    clock = [1_000.0]
+    monkeypatch.setattr("custom_components.halo_collar.controls.time.monotonic", lambda: clock[0])
+    coordinator = FakeCoordinator(
+        [
+            (_pet(), _collar(), _subscription()),
+            (_pet(), _collar(), _subscription()),
+        ]
+    )
+    client = FakeFindClient()
+    cooldowns = {}
+    entry = _find_entry()
+
+    await _execute_find(coordinator, client, entry, cooldowns=cooldowns)
+    with pytest.raises(HaloControlError, match="cooldown"):
+        await _execute_find(coordinator, client, entry, cooldowns=cooldowns)
+
+    assert client.writes == ["collar-1"]
+    assert coordinator.refreshes == 2
+
+    clock[0] += 60.0
+    await _execute_find(coordinator, client, entry, cooldowns=cooldowns)
+    assert client.writes == ["collar-1", "collar-1"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mutation", ["option", "entitlement", "identity"])
+async def test_find_collar_revalidates_every_gate_at_dispatch_boundary(mutation):
+    entry = _find_entry()
+    coordinator = FakeCoordinator([(_pet(), _collar(), _subscription())])
+
+    def mutate():
+        pet, collar, subscription = coordinator.states[coordinator.index]
+        if mutation == "option":
+            entry.options[CONF_ENABLE_FIND_COLLAR] = False
+        elif mutation == "entitlement":
+            subscription["features"][0]["isEnabled"] = False
+        else:
+            coordinator.states[coordinator.index] = (
+                pet,
+                collar | {"id": "collar-2"},
+                subscription,
+            )
+
+    client = MutatingFindClient(mutate)
+
+    with pytest.raises(HaloControlError):
+        await _execute_find(coordinator, client, entry)
+
+    assert client.writes == []
+    assert coordinator.refreshes == 1
+
+
+@pytest.mark.asyncio
+async def test_find_collar_dispatch_boundary_preserves_strictest_freshness():
+    timestamp = (datetime.now(UTC) - timedelta(seconds=500)).isoformat()
+    entry = _find_entry()
+    entry.options[CONF_STALE_AFTER] = 900
+    coordinator = FakeCoordinator([(_pet(), _collar(timestamp=timestamp), _subscription())])
+    cooldowns = {}
+
+    def tighten_threshold():
+        entry.options[CONF_STALE_AFTER] = 120
+
+    client = MutatingFindClient(tighten_threshold)
+
+    with pytest.raises(HaloControlError, match="stale"):
+        await _execute_find(
+            coordinator,
+            client,
+            entry,
+            cooldowns=cooldowns,
+        )
+
+    assert client.writes == []
+    assert cooldowns == {}
+    assert coordinator.refreshes == 1
+
+
+@pytest.mark.asyncio
+async def test_find_collar_and_fence_commands_share_one_entry_lock():
+    find_coordinator = FakeCoordinator(
+        [
+            (_pet(), _collar(), _subscription()),
+            (_pet(), _collar(), _subscription()),
+        ]
+    )
+    fence_coordinator = FakeCoordinator([(_pet(), _collar())])
+    find_client = BlockingFindClient()
+    fence_client = FakeClient()
+    control_lock = asyncio.Lock()
+
+    find_task = asyncio.create_task(
+        _execute_find(
+            find_coordinator,
+            find_client,
+            _find_entry(),
+            control_lock=control_lock,
+        )
+    )
+    await find_client.started.wait()
+
+    fence_task = asyncio.create_task(
+        _execute(
+            fence_coordinator,
+            fence_client,
+            _entry(),
+            enabled=True,
+            control_lock=control_lock,
+        )
+    )
+    await asyncio.sleep(0)
+
+    assert fence_coordinator.refreshes == 0
+    assert fence_client.writes == []
+
+    fence_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await fence_task
+    find_client.release.set()
+    await find_task
+
+    assert find_client.writes == ["collar-1"]
+    assert find_coordinator.refreshes == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("client", "message"),
+    [
+        (UnknownFindClient(), "outcome is unknown"),
+        (NotFoundFindClient(), "not found"),
+    ],
+)
+async def test_find_collar_failure_never_retries_and_keeps_cooldown(client, message):
+    coordinator = FakeCoordinator(
+        [
+            (_pet(), _collar(), _subscription()),
+            (_pet(), _collar(), _subscription()),
+        ]
+    )
+    cooldowns = {}
+
+    with pytest.raises(HaloControlError, match=message):
+        await _execute_find(coordinator, client, _find_entry(), cooldowns=cooldowns)
+
+    assert client.writes == ["collar-1"]
+    assert coordinator.refreshes == 2
+    assert find_collar_cooldown_remaining(cooldowns, "collar-1") > 0
+
+
+@pytest.mark.asyncio
+async def test_find_collar_cancellation_finishes_committed_phase_and_releases_lock():
+    coordinator = FakeCoordinator(
+        [
+            (_pet(), _collar(), _subscription()),
+            (_pet(), _collar(), _subscription()),
+        ]
+    )
+    client = BlockingFindClient()
+    control_lock = asyncio.Lock()
+    task = asyncio.create_task(
+        _execute_find(
+            coordinator,
+            client,
+            _find_entry(),
+            control_lock=control_lock,
+        )
+    )
+    await client.started.wait()
+
+    task.cancel()
+    await asyncio.sleep(0)
+    assert control_lock.locked() is True
+    assert client.writes == ["collar-1"]
+
+    client.release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert coordinator.refreshes == 2
+    assert control_lock.locked() is False
+    assert client.writes == ["collar-1"]

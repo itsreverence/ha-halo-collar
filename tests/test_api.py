@@ -11,6 +11,7 @@ from custom_components.halo_collar.api import (
     HaloApiClient,
     HaloApiError,
     HaloAuthError,
+    HaloCollarNotFound,
     HaloWriteOutcomeUnknown,
 )
 
@@ -447,6 +448,113 @@ async def test_set_fences_enabled_uses_recovered_instant_mode_contract():
     assert headers["Authorization"] == "Bearer access"
     assert session.put_redirects == [False]
     assert response["desiredMode"]["fencesOn"] is True
+
+
+class FindCollarSession(FakeSession):
+    def __init__(self, status=204, error=None):
+        super().__init__()
+        self.status = status
+        self.error = error
+        self.response = FakeResponse(status, None)
+
+    async def put(self, url, json=None, headers=None, allow_redirects=True):
+        self.put_redirects.append(allow_redirects)
+        self.puts.append((url, json, headers))
+        if self.error is not None:
+            raise self.error
+        return self.response
+
+
+@pytest.mark.asyncio
+async def test_find_collar_uses_bodyless_single_attempt_contract():
+    session = FindCollarSession()
+    client = _new_client(session)
+    client._access_token = "access"
+    client._expires_at = time.time() + 3600
+
+    await client.async_find_collar("collar/id")
+
+    assert len(session.puts) == 1
+    url, payload, headers = session.puts[0]
+    assert url == "https://api.example/collar/collar%2Fid/find"
+    assert payload is None
+    assert headers["Authorization"] == "Bearer access"
+    assert session.put_redirects == [False]
+    assert session.response.released is True
+
+
+@pytest.mark.asyncio
+async def test_find_collar_pre_dispatch_runs_after_refresh_and_can_veto():
+    session = FindCollarSession()
+    client = _new_client(session)
+    client._refresh_token = "refresh"
+
+    def veto():
+        assert client.token_snapshot["access_token"] == "new-access"
+        raise RuntimeError("find option revoked")
+
+    with pytest.raises(RuntimeError, match="revoked"):
+        await client.async_find_collar("collar-1", pre_dispatch=veto)
+
+    assert len(session.posts) == 1
+    assert session.puts == []
+
+
+@pytest.mark.asyncio
+async def test_find_collar_404_is_known_not_found_without_retry():
+    session = FindCollarSession(status=404)
+    client = _new_client(session)
+    client._access_token = "access"
+    client._expires_at = time.time() + 3600
+
+    with pytest.raises(HaloCollarNotFound, match="not found"):
+        await client.async_find_collar("collar-1")
+
+    assert len(session.puts) == 1
+    assert session.response.released is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [401, 307, 429, 500, 503])
+async def test_find_collar_non_success_is_unknown_and_never_retried(status):
+    session = FindCollarSession(status=status)
+    client = _new_client(session)
+    client._access_token = "access"
+    client._expires_at = time.time() + 3600
+
+    with pytest.raises(HaloWriteOutcomeUnknown, match=f"HTTP {status}"):
+        await client.async_find_collar("collar-1")
+
+    assert len(session.puts) == 1
+    assert session.put_redirects == [False]
+    assert session.response.released is True
+
+
+@pytest.mark.asyncio
+async def test_find_collar_transport_failure_is_unknown_and_never_retried():
+    session = FindCollarSession(error=aiohttp.ClientConnectionError("disconnected"))
+    client = _new_client(session)
+    client._access_token = "access"
+    client._expires_at = time.time() + 3600
+
+    with pytest.raises(HaloWriteOutcomeUnknown, match="outcome is unknown"):
+        await client.async_find_collar("collar-1")
+
+    assert len(session.puts) == 1
+    assert session.put_redirects == [False]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("collar_id", ["", 123, [], {}])
+async def test_find_collar_rejects_invalid_target_before_transport(collar_id):
+    session = FindCollarSession()
+    client = _new_client(session)
+
+    with pytest.raises(HaloApiError, match="non-empty string"):
+        await client.async_find_collar(collar_id)
+
+    assert session.posts == []
+    assert session.puts == []
 
 
 @pytest.mark.asyncio

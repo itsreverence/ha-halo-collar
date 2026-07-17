@@ -11,7 +11,11 @@ pytest.importorskip("homeassistant")
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import STATE_ON, STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.helpers import entity_registry as er
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from homeassistant.util import dt as dt_util
+from pytest_homeassistant_custom_component.common import (
+    MockConfigEntry,
+    async_fire_time_changed,
+)
 
 from custom_components.halo_collar.api import HaloApiError, HaloAuthError, HaloState
 from custom_components.halo_collar.const import (
@@ -20,6 +24,7 @@ from custom_components.halo_collar.const import (
     CONF_CLIENT_ID,
     CONF_CLIENT_SECRET,
     CONF_ENABLE_FENCE_CONTROLS,
+    CONF_ENABLE_FIND_COLLAR,
     CONF_EXPIRES_AT,
     CONF_REFRESH_TOKEN,
     CONF_SCAN_INTERVAL,
@@ -35,6 +40,7 @@ class FakeHaloClient:
         self.state = state
         self.fetches = 0
         self.writes = []
+        self.finds = []
         self._snapshot = {
             "access_token": "access",
             "refresh_token": "refresh",
@@ -54,6 +60,11 @@ class FakeHaloClient:
             pre_dispatch()
         self.writes.append((pet_id, enabled))
         return {"ok": True}
+
+    async def async_find_collar(self, collar_id, *, pre_dispatch=None):
+        if pre_dispatch is not None:
+            pre_dispatch()
+        self.finds.append(collar_id)
 
 
 class FailingHaloClient(FakeHaloClient):
@@ -123,6 +134,12 @@ def _state(*, indoors: bool = False, walks: list[dict] | None = None):
             "isApplicationUsageAllowed": True,
             "maxCollarsCount": 2,
             "maxGeoFencesCount": 20,
+            "features": [
+                {
+                    "featureType": {"id": "findcollar"},
+                    "isEnabled": True,
+                }
+            ],
         },
         server_time=timestamp,
         walks=[] if walks is None else walks,
@@ -178,6 +195,7 @@ async def test_runtime_setup_registers_platforms_and_guarded_control_surface(has
     assert entry.state is ConfigEntryState.LOADED
     assert client.fetches == 1
     assert hass.states.get("button.cowboy_enable_fences") is not None
+    assert hass.states.get("button.cowboy_find_collar_sound_and_light") is None
     assert hass.states.get("switch.cowboy_fence_mode") is None
     assert hass.states.get("device_tracker.cowboy") is not None
     assert hass.states.get("event.cowboy_fence_breach_event") is not None
@@ -231,6 +249,41 @@ async def test_runtime_setup_registers_platforms_and_guarded_control_surface(has
     assert subscription.attributes["application_usage_allowed"] is True
     assert subscription.attributes["max_collars"] == 2
     assert subscription.attributes["max_fences"] == 20
+
+
+async def test_find_collar_button_is_opt_in_and_dispatches_one_synthetic_command(hass, monkeypatch):
+    clock = [1_000.0]
+    monkeypatch.setattr("custom_components.halo_collar.controls.time.monotonic", lambda: clock[0])
+    client = FakeHaloClient(_state())
+    entry = _entry({CONF_ENABLE_FIND_COLLAR: True})
+    entry.add_to_hass(hass)
+
+    await _setup(hass, entry, client)
+
+    collar_id = client.state.collars[0]["id"]
+    entity_id = er.async_get(hass).async_get_entity_id("button", DOMAIN, f"{collar_id}_find_collar")
+    assert entity_id == "button.cowboy_find_collar_sound_and_light"
+    assert hass.states.get(entity_id).state != STATE_UNAVAILABLE
+
+    await hass.services.async_call(
+        "button",
+        "press",
+        {"entity_id": entity_id},
+        blocking=True,
+    )
+    await hass.async_block_till_done()
+
+    assert client.finds == ["collar-1"]
+    assert client.writes == []
+    assert client.fetches == 3
+    assert hass.states.get(entity_id).state == STATE_UNAVAILABLE
+
+    clock[0] += 61.0
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=61))
+    await hass.async_block_till_done()
+
+    assert hass.states.get(entity_id).state != STATE_UNAVAILABLE
+    assert client.fetches == 3
 
 
 async def test_runtime_insight_sensor_updates_after_coordinator_refresh(hass):
@@ -607,6 +660,35 @@ async def test_runtime_reload_preserves_domain_lock_and_revokes_disable_surface(
     revoked = hass.states.get("switch.cowboy_fence_mode")
     assert revoked is None or revoked.state == STATE_UNAVAILABLE
     assert client.writes == []
+
+
+async def test_runtime_find_option_reload_adds_button_and_preserves_lock(hass):
+    client = FakeHaloClient(_state())
+    entry = _entry({CONF_ENABLE_FIND_COLLAR: False})
+    entry.add_to_hass(hass)
+    await _setup(hass, entry, client)
+
+    collar_id = client.state.collars[0]["id"]
+    unique_id = f"{collar_id}_find_collar"
+    assert er.async_get(hass).async_get_entity_id("button", DOMAIN, unique_id) is None
+    original_lock = control_lock_for(hass.data[DOMAIN], entry.entry_id)
+
+    with patch(
+        "custom_components.halo_collar.api.HaloApiClient",
+        return_value=client,
+    ):
+        hass.config_entries.async_update_entry(
+            entry,
+            options={**entry.options, CONF_ENABLE_FIND_COLLAR: True},
+        )
+        await hass.async_block_till_done()
+
+    assert entry.state is ConfigEntryState.LOADED
+    assert control_lock_for(hass.data[DOMAIN], entry.entry_id) is original_lock
+    entity_id = er.async_get(hass).async_get_entity_id("button", DOMAIN, unique_id)
+    assert entity_id == "button.cowboy_find_collar_sound_and_light"
+    assert hass.states.get(entity_id).state != STATE_UNAVAILABLE
+    assert client.finds == []
 
 
 async def test_runtime_manual_unload_and_setup_reuses_lock(hass):
