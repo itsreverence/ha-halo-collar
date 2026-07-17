@@ -154,15 +154,29 @@ def subscription_feature_enabled(subscription: Any, feature_id: str) -> bool:
     features = subscription.get("features")
     if not isinstance(features, list):
         return False
+
+    def _feature_id(feature: Any) -> str | None:
+        if not isinstance(feature, dict):
+            return None
+        identifiers: list[str] = []
+        if "id" in feature:
+            if not isinstance(feature["id"], str):
+                return None
+            identifiers.append(feature["id"])
+        if "featureType" in feature:
+            feature_type = feature["featureType"]
+            if not isinstance(feature_type, dict) or not isinstance(feature_type.get("id"), str):
+                return None
+            identifiers.append(feature_type["id"])
+        normalized_ids = {identifier.casefold() for identifier in identifiers}
+        return identifiers[0] if len(normalized_ids) == 1 else None
+
     normalized = feature_id.casefold()
-    matches = [
-        feature
-        for feature in features
-        if isinstance(feature, dict)
-        and isinstance(feature.get("featureType"), dict)
-        and isinstance(feature["featureType"].get("id"), str)
-        and feature["featureType"]["id"].casefold() == normalized
-    ]
+    matches = []
+    for feature in features:
+        candidate = _feature_id(feature)
+        if candidate is not None and candidate.casefold() == normalized:
+            matches.append(feature)
     return len(matches) == 1 and matches[0].get("isEnabled") is True
 
 
