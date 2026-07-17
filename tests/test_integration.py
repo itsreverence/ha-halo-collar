@@ -11,7 +11,11 @@ pytest.importorskip("homeassistant")
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import STATE_ON, STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.helpers import entity_registry as er
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from homeassistant.util import dt as dt_util
+from pytest_homeassistant_custom_component.common import (
+    MockConfigEntry,
+    async_fire_time_changed,
+)
 
 from custom_components.halo_collar.api import HaloApiError, HaloAuthError, HaloState
 from custom_components.halo_collar.const import (
@@ -247,7 +251,9 @@ async def test_runtime_setup_registers_platforms_and_guarded_control_surface(has
     assert subscription.attributes["max_fences"] == 20
 
 
-async def test_find_collar_button_is_opt_in_and_dispatches_one_synthetic_command(hass):
+async def test_find_collar_button_is_opt_in_and_dispatches_one_synthetic_command(hass, monkeypatch):
+    clock = [1_000.0]
+    monkeypatch.setattr("custom_components.halo_collar.controls.time.monotonic", lambda: clock[0])
     client = FakeHaloClient(_state())
     entry = _entry({CONF_ENABLE_FIND_COLLAR: True})
     entry.add_to_hass(hass)
@@ -271,6 +277,13 @@ async def test_find_collar_button_is_opt_in_and_dispatches_one_synthetic_command
     assert client.writes == []
     assert client.fetches == 3
     assert hass.states.get(entity_id).state == STATE_UNAVAILABLE
+
+    clock[0] += 61.0
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=61))
+    await hass.async_block_till_done()
+
+    assert hass.states.get(entity_id).state != STATE_UNAVAILABLE
+    assert client.fetches == 3
 
 
 async def test_runtime_insight_sensor_updates_after_coordinator_refresh(hass):

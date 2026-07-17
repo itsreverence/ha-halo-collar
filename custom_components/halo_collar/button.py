@@ -3,7 +3,9 @@ from __future__ import annotations
 from typing import cast
 
 from homeassistant.components.button import ButtonEntity
+from homeassistant.core import callback
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.event import async_call_later
 
 from .api import HaloApiError, HaloState
 from .const import (
@@ -116,7 +118,40 @@ class HaloFindCollarButton(HaloEntity, ButtonEntity):
         self._client = client
         self._control_lock = control_lock
         self._cooldowns = cooldowns
+        self._cancel_cooldown_update = None
         self._attr_unique_id = f"{self._collar_id}_find_collar"
+
+    async def async_added_to_hass(self) -> None:
+        """Register coordinator updates and restore any in-flight cooldown timer."""
+        await super().async_added_to_hass()
+        self._schedule_cooldown_update(write_state=False)
+
+    @callback
+    def _schedule_cooldown_update(self, *, write_state: bool = True) -> None:
+        """Update availability exactly when the monotonic cooldown expires."""
+        if self._cancel_cooldown_update is not None:
+            self._cancel_cooldown_update()
+            self._cancel_cooldown_update = None
+
+        remaining = find_collar_cooldown_remaining(self._cooldowns, self._collar_id)
+        if remaining > 0:
+            self._cancel_cooldown_update = async_call_later(
+                self.hass,
+                remaining,
+                self._async_cooldown_finished,
+            )
+            self.async_on_remove(self._cancel_cooldown_update)
+        if write_state:
+            self.async_write_ha_state()
+
+    @callback
+    def _async_cooldown_finished(self, _now) -> None:
+        """Recheck the monotonic deadline and make the button available promptly."""
+        self._cancel_cooldown_update = None
+        if find_collar_cooldown_remaining(self._cooldowns, self._collar_id) > 0:
+            self._schedule_cooldown_update(write_state=False)
+            return
+        self.async_write_ha_state()
 
     @property
     def available(self) -> bool:  # pyright: ignore[reportIncompatibleVariableOverride]
@@ -149,3 +184,5 @@ class HaloFindCollarButton(HaloEntity, ButtonEntity):
             )
         except (HaloApiError, HaloControlError) as err:
             raise HomeAssistantError(f"Could not find Halo collar: {err}") from err
+        finally:
+            self._schedule_cooldown_update()
