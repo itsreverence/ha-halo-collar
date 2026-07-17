@@ -790,12 +790,26 @@ async def test_runtime_find_option_reload_adds_button_and_preserves_lock(hass):
     assert client.finds == []
 
 
-async def test_runtime_manual_unload_and_setup_reuses_lock(hass):
+async def test_runtime_manual_unload_and_setup_reuses_lock_and_entity_ids(hass):
     client = FakeHaloClient(_state())
     entry = _entry({})
     entry.add_to_hass(hass)
     await _setup(hass, entry, client)
     original_lock = control_lock_for(hass.data[DOMAIN], entry.entry_id)
+    registry = er.async_get(hass)
+
+    def registered_entities():
+        return {
+            item.unique_id: item.entity_id
+            for item in registry.entities.values()
+            if item.config_entry_id == entry.entry_id
+        }
+
+    before = registered_entities()
+    assert before["collar-1_last_walk_average_speed"] == ("sensor.cowboy_recent_walk_average_speed")
+    assert before["collar-1_collar_hardware_issue"] == (
+        "binary_sensor.cowboy_collar_hardware_issue"
+    )
 
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
@@ -804,6 +818,7 @@ async def test_runtime_manual_unload_and_setup_reuses_lock(hass):
 
     await _setup(hass, entry, client)
     assert control_lock_for(hass.data[DOMAIN], entry.entry_id) is original_lock
+    assert registered_entities() == before
 
 
 @pytest.mark.parametrize(

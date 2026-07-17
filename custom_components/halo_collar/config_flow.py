@@ -74,14 +74,15 @@ class HaloCollarConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             user_input.get(CONF_CLIENT_ID, DEFAULT_CLIENT_ID),
             user_input.get(CONF_CLIENT_SECRET, DEFAULT_CLIENT_SECRET),
         )
+        email = user_input[CONF_EMAIL].strip().lower()
         await client.async_login(
-            user_input[CONF_EMAIL],
+            email,
             user_input[CONF_PASSWORD],
             scope=DEFAULT_TOKEN_SCOPE,
         )
         snapshot = client.token_snapshot
         return {
-            CONF_EMAIL: user_input[CONF_EMAIL],
+            CONF_EMAIL: email,
             CONF_ACCESS_TOKEN: snapshot["access_token"],
             CONF_REFRESH_TOKEN: snapshot["refresh_token"],
             CONF_EXPIRES_AT: snapshot["expires_at"],

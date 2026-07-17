@@ -57,7 +57,10 @@ Do not add corrections, fence geometry writes, other collar wake/control actions
 rejected and triggers reauth; everything transient (timeouts, connection
 errors, 429s, 5xx — including 5xx from the token endpoint) is `HaloApiError`
 and surfaces as a temporary `UpdateFailed` without prompting for credentials.
-GET requests retry twice with a short backoff before giving up.
+GET requests retry twice with a short backoff before giving up. Raised and logged
+errors retain status/operation context but omit provider response bodies and
+resource-bearing write paths so account data and pet/collar IDs are not echoed
+into Home Assistant logs.
 
 ## Telemetry semantics
 

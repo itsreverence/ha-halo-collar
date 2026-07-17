@@ -114,7 +114,7 @@ def redact(data: Any, keys: frozenset[str] = REDACT_KEYS) -> Any:
 
 
 def telemetry(collar: dict[str, Any], key: str) -> Any:
-    return collar.get("telemetry", {}).get(key)
+    return nested(collar, "telemetry", key)
 
 
 def nested(collar: dict[str, Any], *keys: str) -> Any:
