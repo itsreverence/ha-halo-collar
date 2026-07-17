@@ -16,6 +16,8 @@ from .entity import HaloEntity
 from .helpers import (
     active_walk_paused,
     active_walk_state,
+    collar_hardware_issue,
+    collar_issue_details,
     firmware_update_available,
     is_online,
     pet_fences_enabled,
@@ -30,8 +32,11 @@ def _online(collar: dict[str, Any], _pet, entry) -> bool:
 
 @dataclass(frozen=True, kw_only=True)
 class HaloBinarySensorDescription(BinarySensorEntityDescription):
-    # value_fn receives (collar, pet, config entry).
+    # Functions receive (collar, pet, config entry).
     value_fn: Callable[[dict[str, Any], dict[str, Any] | None, Any], bool | None]
+    attributes_fn: (
+        Callable[[dict[str, Any], dict[str, Any] | None, Any], dict[str, Any] | None] | None
+    ) = None
 
 
 BINARY_SENSORS = (
@@ -96,6 +101,14 @@ BINARY_SENSORS = (
         value_fn=lambda c, _p, _entry: reporting_issue(c),
     ),
     HaloBinarySensorDescription(
+        key="collar_hardware_issue",
+        translation_key="collar_hardware_issue",
+        device_class=BinarySensorDeviceClass.PROBLEM,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda c, _p, _entry: collar_hardware_issue(c),
+        attributes_fn=lambda c, _p, _entry: collar_issue_details(c),
+    ),
+    HaloBinarySensorDescription(
         key="firmware_update_available",
         translation_key="firmware_update_available",
         device_class=BinarySensorDeviceClass.UPDATE,
@@ -134,3 +147,13 @@ class HaloBinarySensor(HaloEntity, BinarySensorEntity):
         if collar is None:
             return None
         return self.entity_description.value_fn(collar, self.pet, self._entry)
+
+    @property
+    def extra_state_attributes(  # pyright: ignore[reportIncompatibleVariableOverride]
+        self,
+    ) -> dict[str, Any]:
+        collar = self.collar
+        attributes_fn = self.entity_description.attributes_fn
+        if collar is None or attributes_fn is None:
+            return {}
+        return attributes_fn(collar, self.pet, self._entry) or {}

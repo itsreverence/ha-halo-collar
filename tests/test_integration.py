@@ -77,6 +77,39 @@ class FailingHaloClient(FakeHaloClient):
         raise self.error
 
 
+def _complete_issues(status: str = "noIssue") -> dict:
+    return {
+        "hasReportingIssue": False,
+        "battery": {
+            "chargingIssue2IssueStatus": status,
+            "degradationIssueStatus": status,
+            "gaugeChipFailureIssueStatus": status,
+        },
+        "gps": {
+            "chipFailure1IssueStatus": status,
+            "chipFailure4IssueStatus": status,
+            "outdatedChipFailureIssueStatus": status,
+        },
+        "lte": {
+            "moduleFailureIssueStatus": status,
+            "simCardScrappedIssueStatus": status,
+            "simCardSlotFailureIssueStatus": status,
+        },
+        "wifi": {"moduleFailureIssueStatus": status},
+        "other": {
+            "audioChipFailureIssueStatus": status,
+            "bleChipFailureIssueStatus": status,
+            "processorCorruption1IssueStatus": status,
+            "processorCorruption2IssueStatus": status,
+            "processorCorruption3IssueStatus": status,
+        },
+        "sensors": {
+            "compassCalibrationFailureIssueStatus": status,
+            "memsChipFailureIssueStatus": status,
+        },
+    }
+
+
 def _state(*, indoors: bool = False, walks: list[dict] | None = None):
     timestamp = datetime.now(UTC).replace(microsecond=0).isoformat()
     pet = {
@@ -236,6 +269,10 @@ async def test_runtime_setup_registers_platforms_and_guarded_control_surface(has
         == STATE_ON
     )
     assert (
+        _state_for_unique_id(hass, "binary_sensor", f"{collar_id}_collar_hardware_issue").state
+        == STATE_UNKNOWN
+    )
+    assert (
         _state_for_unique_id(hass, "binary_sensor", f"{collar_id}_firmware_update_available").state
         == "off"
     )
@@ -249,6 +286,36 @@ async def test_runtime_setup_registers_platforms_and_guarded_control_surface(has
     assert subscription.attributes["application_usage_allowed"] is True
     assert subscription.attributes["max_collars"] == 2
     assert subscription.attributes["max_fences"] == 20
+
+
+async def test_runtime_hardware_issue_is_bounded_and_fail_closed(hass):
+    state = _state()
+    issues = _complete_issues()
+    issues["battery"]["degradationIssueStatus"] = "nonCatastrophic"
+    issues["other"]["audioChipFailureIssueStatus"] = "catastrophic"
+    state.collars[0]["issues"] = issues
+    client = FakeHaloClient(state)
+    entry = _entry({})
+    entry.add_to_hass(hass)
+    await _setup(hass, entry, client)
+    collar_id = state.collars[0]["id"]
+
+    hardware = _state_for_unique_id(hass, "binary_sensor", f"{collar_id}_collar_hardware_issue")
+    assert hardware.state == STATE_ON
+    assert hardware.attributes["critical_issues"] == ["Audio chip"]
+    assert hardware.attributes["non_critical_issues"] == ["Battery degradation"]
+    serialized = json.dumps(hardware.attributes).lower()
+    assert "status" not in serialized
+    assert "serial" not in serialized
+    assert "id" not in serialized
+
+    issues["wifi"]["moduleFailureIssueStatus"] = "unexpected-provider-value"
+    await hass.data[DOMAIN][entry.entry_id]["coordinator"].async_refresh()
+    await hass.async_block_till_done()
+    hardware = _state_for_unique_id(hass, "binary_sensor", f"{collar_id}_collar_hardware_issue")
+    assert hardware.state == STATE_UNKNOWN
+    assert "critical_issues" not in hardware.attributes
+    assert "non_critical_issues" not in hardware.attributes
 
 
 async def test_find_collar_button_is_opt_in_and_dispatches_one_synthetic_command(hass, monkeypatch):
@@ -355,6 +422,9 @@ async def test_runtime_walk_sensors_are_safe_and_update_after_refresh(hass):
     distance = _state_for_unique_id(hass, "sensor", f"{collar_id}_last_walk_distance")
     assert distance.state == "125.5"
     assert distance.attributes["unit_of_measurement"] == "m"
+    speed = _state_for_unique_id(hass, "sensor", f"{collar_id}_last_walk_average_speed")
+    assert float(speed.state) == pytest.approx(125.5 / 420)
+    assert speed.attributes["unit_of_measurement"] == "m/s"
 
     forbidden_key_fragments = (
         "id",
@@ -477,15 +547,44 @@ async def test_runtime_walk_sensors_are_unknown_for_empty_or_mismatched_history(
     coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
     collar_id = client.state.collars[0]["id"]
 
-    for key in ("last_walk", "last_walk_duration", "last_walk_distance"):
+    for key in (
+        "last_walk",
+        "last_walk_duration",
+        "last_walk_distance",
+        "last_walk_average_speed",
+    ):
         assert _state_for_unique_id(hass, "sensor", f"{collar_id}_{key}").state == STATE_UNKNOWN
 
     client.state.walks = [{"endedAt": "not-a-time", "pets": [{"id": "pet-other"}]}]
     await coordinator.async_refresh()
     await hass.async_block_till_done()
 
-    for key in ("last_walk", "last_walk_duration", "last_walk_distance"):
+    for key in (
+        "last_walk",
+        "last_walk_duration",
+        "last_walk_distance",
+        "last_walk_average_speed",
+    ):
         assert _state_for_unique_id(hass, "sensor", f"{collar_id}_{key}").state == STATE_UNKNOWN
+
+    client.state.walks = [
+        {
+            "endedAt": "2026-07-06T12:00:00Z",
+            "pets": [
+                {
+                    "id": "pet-1",
+                    "walkedDurationInSeconds": 0,
+                    "walkedDistanceInMeters": 12,
+                }
+            ],
+        }
+    ]
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+    assert (
+        _state_for_unique_id(hass, "sensor", f"{collar_id}_last_walk_average_speed").state
+        == STATE_UNKNOWN
+    )
 
 
 async def test_runtime_active_walk_entity_is_unknown_when_walk_fields_are_missing(hass):
