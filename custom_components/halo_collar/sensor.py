@@ -18,6 +18,8 @@ from .api import HaloState
 from .const import DOMAIN
 from .entity import HaloEntity
 from .helpers import WalkSummary as _WalkSummary
+from .helpers import active_walk_distance as _active_walk_distance
+from .helpers import active_walk_duration as _active_walk_duration
 from .helpers import activity_value as _activity_value
 from .helpers import average_connectivity as _average_connectivity
 from .helpers import count_goal_progress_attributes as _count_goal_progress_attributes
@@ -121,6 +123,23 @@ SENSORS = (
         translation_key="last_telemetry",
         device_class=SensorDeviceClass.TIMESTAMP,
         value_fn=lambda c, _p: _last_telemetry(c),
+    ),
+    HaloSensorDescription(
+        key="active_walk_duration",
+        translation_key="active_walk_duration",
+        device_class=SensorDeviceClass.DURATION,
+        native_unit_of_measurement=UnitOfTime.SECONDS,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda c, p: _active_walk_duration(p, c),
+    ),
+    HaloSensorDescription(
+        key="active_walk_distance",
+        translation_key="active_walk_distance",
+        device_class=SensorDeviceClass.DISTANCE,
+        native_unit_of_measurement=UnitOfLength.METERS,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=1,
+        value_fn=lambda c, p: _active_walk_distance(p, c),
     ),
     HaloSensorDescription(
         key="activity_duration",

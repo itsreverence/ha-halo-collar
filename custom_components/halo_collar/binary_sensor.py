@@ -14,6 +14,7 @@ from homeassistant.const import EntityCategory
 from .const import CONF_STALE_AFTER, DEFAULT_STALE_AFTER_SECONDS, DOMAIN
 from .entity import HaloEntity
 from .helpers import (
+    active_walk_paused,
     active_walk_state,
     firmware_update_available,
     is_online,
@@ -81,6 +82,11 @@ BINARY_SENSORS = (
         key="active_walk",
         translation_key="active_walk",
         value_fn=lambda c, p, _entry: active_walk_state(p, c),
+    ),
+    HaloBinarySensorDescription(
+        key="active_walk_paused",
+        translation_key="active_walk_paused",
+        value_fn=lambda c, p, _entry: active_walk_paused(p, c),
     ),
     HaloBinarySensorDescription(
         key="collar_reporting_issue",
