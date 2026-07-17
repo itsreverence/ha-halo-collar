@@ -545,12 +545,13 @@ async def test_find_collar_transport_failure_is_unknown_and_never_retried():
 
 
 @pytest.mark.asyncio
-async def test_find_collar_rejects_empty_target_before_transport():
+@pytest.mark.parametrize("collar_id", ["", 123, [], {}])
+async def test_find_collar_rejects_invalid_target_before_transport(collar_id):
     session = FindCollarSession()
     client = _new_client(session)
 
-    with pytest.raises(HaloApiError, match="Collar ID is required"):
-        await client.async_find_collar("")
+    with pytest.raises(HaloApiError, match="non-empty string"):
+        await client.async_find_collar(collar_id)
 
     assert session.posts == []
     assert session.puts == []

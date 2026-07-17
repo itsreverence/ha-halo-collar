@@ -279,10 +279,12 @@ def _validate_find_snapshot(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Fail closed unless Find Collar is safe for one exact current mapping."""
     pet, collar, subscription = state_getter()
-    if pet is None or collar is None or not pet.get("id") or not collar.get("id"):
+    if pet is None or collar is None:
         raise HaloControlError("Halo pet/collar mapping is unavailable")
-    pet_id = pet["id"]
-    collar_id = collar["id"]
+    pet_id = pet.get("id")
+    collar_id = collar.get("id")
+    if not isinstance(pet_id, str) or not pet_id or not isinstance(collar_id, str) or not collar_id:
+        raise HaloControlError("Halo pet/collar mapping is unavailable")
     if nested(collar, "petInfo", "id") != pet_id or nested(pet, "collarInfo", "id") != collar_id:
         raise HaloControlError("Halo pet/collar mapping is unavailable")
     if expected_pet_id is not None and pet_id != expected_pet_id:

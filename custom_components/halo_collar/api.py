@@ -194,8 +194,8 @@ class HaloApiClient:
         This physical command has no response body or durable confirmation state.
         It is sent at most once and is never retried after dispatch.
         """
-        if not collar_id:
-            raise HaloApiError("Collar ID is required to find a collar")
+        if not isinstance(collar_id, str) or not collar_id:
+            raise HaloApiError("Collar ID must be a non-empty string to find a collar")
         path = f"/collar/{quote(collar_id, safe='')}/find"
         await self._async_put_no_content(path, pre_dispatch=pre_dispatch)
 
