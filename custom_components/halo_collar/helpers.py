@@ -159,21 +159,21 @@ def pet_safety_status(pet: dict[str, Any] | None) -> Any:
 
 
 def active_walk_state(pet: dict[str, Any] | None, collar: dict[str, Any] | None) -> bool | None:
-    """Return the provider walk state, preserving missing telemetry as unknown."""
-    sources = (pet, collar)
-    for source in sources:
-        if not isinstance(source, dict):
-            continue
-        payload = source.get("telemetry")
-        if isinstance(payload, dict) and "walk" in payload and payload["walk"] is not None:
-            return True
-    if all(
-        isinstance(source, dict)
-        and isinstance(source.get("telemetry"), dict)
-        and source["telemetry"].get("walk") is None
-        and "walk" in source["telemetry"]
-        for source in sources
-    ):
+    """Return the two authoritative collar walk snapshots as a tri-state value."""
+    payloads = (
+        nested(pet or {}, "collarInfo", "telemetry"),
+        nested(collar or {}, "telemetry"),
+    )
+    walks = [
+        payload.get("walk")
+        for payload in payloads
+        if isinstance(payload, dict) and "walk" in payload
+    ]
+    if any(isinstance(walk, dict) for walk in walks):
+        return True
+    if any(walk is not None for walk in walks):
+        return None
+    if len(walks) == len(payloads):
         return False
     return None
 
