@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
+import traceback
 
 import aiohttp
 import pytest
@@ -35,12 +37,15 @@ class FakeResponse:
 class FakeSession:
     def __init__(self, token_status=200):
         self.posts = []
+        self.post_redirects = []
         self.gets = []
+        self.get_redirects = []
         self.puts = []
         self.put_redirects = []
         self._token_status = token_status
 
-    async def post(self, url, data=None, headers=None):
+    async def post(self, url, data=None, headers=None, allow_redirects=True):
+        self.post_redirects.append(allow_redirects)
         self.posts.append((url, data, headers))
         if self._token_status >= 400:
             return FakeResponse(self._token_status, {"error": "invalid_grant"})
@@ -53,7 +58,8 @@ class FakeSession:
             },
         )
 
-    async def get(self, url, headers=None):
+    async def get(self, url, headers=None, allow_redirects=True):
+        self.get_redirects.append(allow_redirects)
         self.gets.append((url, headers))
         if url.endswith("/pet/my"):
             return FakeResponse(200, [{"id": "pet1"}])
@@ -108,10 +114,12 @@ async def test_refreshes_expired_token_and_fetches_state():
     ) == 1
     assert client.token_snapshot["refresh_token"] == "new-refresh"
     assert client.token_snapshot["expires_at"] > time.time()
+    assert session.post_redirects == [False]
+    assert session.get_redirects == [False] * 5
 
 
 class ConcurrentRefreshSession(FakeSession):
-    async def post(self, url, data=None, headers=None):
+    async def post(self, url, data=None, headers=None, allow_redirects=True):
         self.posts.append((url, data, headers))
         await asyncio.sleep(0)
         return FakeResponse(
@@ -148,7 +156,7 @@ class ConcurrentUnauthorizedSession(FakeSession):
         self.old_token_gets = 0
         self.old_token_barrier = asyncio.Event()
 
-    async def get(self, url, headers=None):
+    async def get(self, url, headers=None, allow_redirects=True):
         assert headers is not None
         self.gets.append((url, headers))
         if headers["Authorization"] == "Bearer old-access":
@@ -219,6 +227,129 @@ async def test_login_raises_auth_error_on_bad_credentials():
         await client.async_login("user@example.com", "wrong", scope="openid")
 
 
+@pytest.mark.asyncio
+async def test_missing_oauth_secret_blocks_login_and_refresh_before_transport():
+    session = FakeSession()
+    client = _new_client(session)
+    client._client_secret = ""
+
+    with pytest.raises(HaloApiError, match="client secret is required"):
+        await client.async_login("user@example.com", "password", scope="openid")
+    with pytest.raises(HaloApiError, match="client secret is required"):
+        await client.async_refresh_token()
+
+    assert session.posts == []
+
+
+@pytest.mark.asyncio
+async def test_empty_fence_target_is_rejected_before_transport():
+    session = FakeSession()
+    client = _new_client(session)
+
+    with pytest.raises(HaloApiError, match="Pet ID is required"):
+        await client.async_set_fences_enabled("", enabled=True)
+
+    assert session.posts == []
+    assert session.puts == []
+
+
+class MissingAccessTokenSession(FakeSession):
+    async def post(self, url, data=None, headers=None, allow_redirects=True):
+        self.posts.append((url, data, headers))
+        return FakeResponse(200, {"refresh_token": "PRIVATE_TOKEN_PAYLOAD_SENTINEL"})
+
+
+@pytest.mark.asyncio
+async def test_token_success_without_access_token_is_sanitized_auth_error():
+    client = _new_client(MissingAccessTokenSession())
+
+    with pytest.raises(HaloAuthError, match="no access_token") as excinfo:
+        await client.async_login("user@example.com", "password", scope="openid")
+
+    assert "PRIVATE_TOKEN_PAYLOAD_SENTINEL" not in str(excinfo.value)
+
+
+class RedirectSession(FakeSession):
+    def __init__(self, status: int):
+        super().__init__()
+        self.status = status
+
+    async def get(self, url, headers=None, allow_redirects=True):
+        self.get_redirects.append(allow_redirects)
+        self.gets.append((url, headers))
+        return FakeResponse(self.status, {"location": "https://redirect.invalid"})
+
+    async def post(self, url, data=None, headers=None, allow_redirects=True):
+        self.post_redirects.append(allow_redirects)
+        self.posts.append((url, data, headers))
+        return FakeResponse(self.status, {"location": "https://redirect.invalid"})
+
+
+@pytest.mark.asyncio
+async def test_get_and_oauth_redirects_are_rejected_without_following():
+    get_session = RedirectSession(307)
+    get_client = _new_client(get_session)
+    get_client._access_token = "access"
+    get_client._expires_at = time.time() + 3600
+
+    with pytest.raises(HaloApiError, match="HTTP 307"):
+        await get_client.async_get("/pet/my")
+
+    assert len(get_session.gets) == 1
+    assert get_session.get_redirects == [False]
+
+    token_session = RedirectSession(308)
+    token_client = _new_client(token_session)
+    with pytest.raises(HaloApiError, match="HTTP 308"):
+        await token_client.async_login("user@example.com", "password", scope="openid")
+
+    assert len(token_session.posts) == 1
+    assert token_session.post_redirects == [False]
+
+
+class TokenPayloadSession(FakeSession):
+    def __init__(self, payload):
+        super().__init__()
+        self.response = FakeResponse(200, payload)
+
+    async def post(self, url, data=None, headers=None, allow_redirects=True):
+        self.post_redirects.append(allow_redirects)
+        self.posts.append((url, data, headers))
+        return self.response
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"access_token": 123, "refresh_token": "new-r", "expires_in": 3600},
+        {"access_token": "", "refresh_token": "new-r", "expires_in": 3600},
+        {"access_token": "new", "refresh_token": 123, "expires_in": 3600},
+        {"access_token": "new", "refresh_token": "", "expires_in": 3600},
+        {"access_token": "new", "refresh_token": "new-r"},
+        {"access_token": "new", "refresh_token": "new-r", "expires_in": "bad"},
+        {"access_token": "new", "refresh_token": "new-r", "expires_in": 0},
+        {"access_token": "new", "refresh_token": "new-r", "expires_in": float("inf")},
+        {"access_token": "new", "refresh_token": "new-r", "expires_in": 10**1000},
+        {"access_token": "new", "refresh_token": "new-r", "expires_in": True},
+    ],
+)
+async def test_malformed_token_success_is_atomic_and_released(payload):
+    session = TokenPayloadSession(payload)
+    client = _new_client(session)
+    client._access_token = "old-access"
+    client._refresh_token = "old-refresh"
+    client._expires_at = 4_102_444_800.0
+    before = client.token_snapshot
+
+    with pytest.raises(HaloApiError):
+        await client.async_login("user@example.com", "password", scope="openid")
+
+    assert client.token_snapshot == before
+    assert session.response.released is True
+    assert session.post_redirects == [False]
+
+
 class SequencedSession(FakeSession):
     """Session whose GETs walk through a scripted list; the last item repeats."""
 
@@ -226,7 +357,7 @@ class SequencedSession(FakeSession):
         super().__init__(token_status=token_status)
         self._get_results = list(get_results)
 
-    async def get(self, url, headers=None):
+    async def get(self, url, headers=None, allow_redirects=True):
         self.gets.append((url, headers))
         result = self._get_results.pop(0) if len(self._get_results) > 1 else self._get_results[0]
         if isinstance(result, Exception):
@@ -255,6 +386,24 @@ class SequencedSession(FakeSession):
                 FakeResponse(200, "2026-07-06T00:32:03Z"),
             ],
             "collar state response was not a list",
+        ),
+        (
+            [
+                FakeResponse(200, [{"id": "pet-1"}, None]),
+                FakeResponse(200, []),
+                FakeResponse(200, {}),
+                FakeResponse(200, "2026-07-06T00:32:03Z"),
+            ],
+            "pet state response contained a non-object item",
+        ),
+        (
+            [
+                FakeResponse(200, []),
+                FakeResponse(200, [{"id": "collar-1"}, "not-an-object"]),
+                FakeResponse(200, {}),
+                FakeResponse(200, "2026-07-06T00:32:03Z"),
+            ],
+            "collar state response contained a non-object item",
         ),
         (
             [
@@ -367,6 +516,50 @@ async def test_token_endpoint_outage_is_not_an_auth_error():
     assert not isinstance(excinfo.value, HaloAuthError)
 
 
+class SensitiveTokenRejectionSession(FakeSession):
+    async def post(self, url, data=None, headers=None, allow_redirects=True):
+        self.posts.append((url, data, headers))
+        return FakeResponse(
+            400,
+            {
+                "error": "PRIVATE_OAUTH_ERROR_SENTINEL",
+                "error_description": "PRIVATE_ACCOUNT_EMAIL_SENTINEL",
+            },
+        )
+
+
+@pytest.mark.asyncio
+async def test_token_rejection_does_not_echo_provider_payload_to_error_or_log(caplog):
+    client = _new_client(SensitiveTokenRejectionSession())
+
+    with pytest.raises(HaloAuthError) as excinfo:
+        await client.async_login("user@example.com", "wrong", scope="openid")
+
+    combined = f"{excinfo.value}\n{caplog.text}".lower()
+    assert "private_oauth_error_sentinel" not in combined
+    assert "private_account_email_sentinel" not in combined
+    assert "http 400" in combined
+
+
+class SensitiveGetFailureSession(FakeSession):
+    async def get(self, url, headers=None, allow_redirects=True):
+        self.gets.append((url, headers))
+        return FakeResponse(418, {"detail": "PRIVATE_GET_BODY_SENTINEL"})
+
+
+@pytest.mark.asyncio
+async def test_get_failure_does_not_echo_provider_payload():
+    client = _new_client(SensitiveGetFailureSession())
+    client._access_token = "access"
+    client._expires_at = time.time() + 3600
+
+    with pytest.raises(HaloApiError) as excinfo:
+        await client.async_get("/pet/my")
+
+    assert "HTTP 418" in str(excinfo.value)
+    assert "PRIVATE_GET_BODY_SENTINEL" not in str(excinfo.value)
+
+
 class StalledTokenBodyResponse(FakeResponse):
     async def text(self):
         await asyncio.sleep(60)
@@ -378,7 +571,7 @@ class StalledTokenBodySession(FakeSession):
         super().__init__()
         self.response = StalledTokenBodyResponse(200, {})
 
-    async def post(self, url, data=None, headers=None):
+    async def post(self, url, data=None, headers=None, allow_redirects=True):
         self.posts.append((url, data, headers))
         return self.response
 
@@ -405,7 +598,7 @@ class InvalidJsonTokenSession(FakeSession):
         super().__init__()
         self.response = InvalidJsonTokenResponse(status, "not-json")
 
-    async def post(self, url, data=None, headers=None):
+    async def post(self, url, data=None, headers=None, allow_redirects=True):
         self.posts.append((url, data, headers))
         return self.response
 
@@ -532,14 +725,21 @@ async def test_find_collar_non_success_is_unknown_and_never_retried(status):
 
 @pytest.mark.asyncio
 async def test_find_collar_transport_failure_is_unknown_and_never_retried():
-    session = FindCollarSession(error=aiohttp.ClientConnectionError("disconnected"))
+    session = FindCollarSession(
+        error=aiohttp.ClientConnectionError("PRIVATE_COLLAR_ID_IN_TRANSPORT_ERROR_SENTINEL")
+    )
     client = _new_client(session)
     client._access_token = "access"
     client._expires_at = time.time() + 3600
 
-    with pytest.raises(HaloWriteOutcomeUnknown, match="outcome is unknown"):
+    with pytest.raises(HaloWriteOutcomeUnknown, match="outcome is unknown") as excinfo:
         await client.async_find_collar("collar-1")
 
+    formatted = "".join(
+        traceback.format_exception(type(excinfo.value), excinfo.value, excinfo.value.__traceback__)
+    )
+    assert "PRIVATE_COLLAR_ID_IN_TRANSPORT_ERROR_SENTINEL" not in formatted
+    assert excinfo.value.__cause__ is None
     assert len(session.puts) == 1
     assert session.put_redirects == [False]
 
@@ -722,6 +922,36 @@ async def test_fence_writes_are_not_retried_on_server_failure():
     assert len(session.puts) == 1
 
 
+class SensitiveWriteFailureSession(FakeSession):
+    async def put(self, url, json=None, headers=None, allow_redirects=True):
+        self.puts.append((url, json, headers))
+        return FakeResponse(503, {"detail": "PRIVATE_WRITE_BODY_SENTINEL"})
+
+
+@pytest.mark.asyncio
+async def test_write_failures_do_not_echo_target_id_or_provider_payload():
+    session = SensitiveWriteFailureSession()
+    client = _new_client(session)
+    client._access_token = "access"
+    client._expires_at = time.time() + 3600
+
+    with pytest.raises(HaloWriteOutcomeUnknown) as excinfo:
+        await client.async_set_fences_enabled("PRIVATE_PET_ID_SENTINEL", enabled=False)
+
+    message = str(excinfo.value)
+    assert "HTTP 503" in message
+    assert "PRIVATE_PET_ID_SENTINEL" not in message
+    assert "PRIVATE_WRITE_BODY_SENTINEL" not in message
+
+    find_session = FindCollarSession(status=503)
+    find_client = _new_client(find_session)
+    find_client._access_token = "access"
+    find_client._expires_at = time.time() + 3600
+    with pytest.raises(HaloWriteOutcomeUnknown) as find_excinfo:
+        await find_client.async_find_collar("PRIVATE_COLLAR_ID_SENTINEL")
+    assert "PRIVATE_COLLAR_ID_SENTINEL" not in str(find_excinfo.value)
+
+
 @pytest.mark.asyncio
 async def test_fetch_state_stores_only_walk_results_after_core_state_validation():
     session = SequencedSession(
@@ -736,6 +966,7 @@ async def test_fetch_state_stores_only_walk_results_after_core_state_validation(
                     "results": [
                         {
                             "endedAt": "2026-07-06T10:30:00Z",
+                            "startTrigger": "button",
                             "id": "PRIVATE_WALK_ID",
                             "name": "PRIVATE_NAME_SENTINEL",
                             "locationName": "PRIVATE_LOCATION_SENTINEL",
@@ -744,6 +975,7 @@ async def test_fetch_state_stores_only_walk_results_after_core_state_validation(
                             "feedback": {"value": "PRIVATE_FEEDBACK_SENTINEL"},
                             "correction": {"value": "PRIVATE_CORRECTION_SENTINEL"},
                             "pets": [
+                                "PRIVATE_NON_OBJECT_PET_SENTINEL",
                                 {
                                     "id": "pet-1",
                                     "walkedDurationInSeconds": 300,
@@ -754,6 +986,11 @@ async def test_fetch_state_stores_only_walk_results_after_core_state_validation(
                                     "id": "pet-2",
                                     "walkedDurationInSeconds": True,
                                     "walkedDistanceInMeters": ["not", "a", "scalar"],
+                                },
+                                {
+                                    "id": "pet-3",
+                                    "walkedDurationInSeconds": float("nan"),
+                                    "walkedDistanceInMeters": float("inf"),
                                 },
                             ],
                         }
@@ -770,6 +1007,7 @@ async def test_fetch_state_stores_only_walk_results_after_core_state_validation(
     assert state.walks == [
         {
             "endedAt": "2026-07-06T10:30:00Z",
+            "startTrigger": "button",
             "pets": [
                 {
                     "id": "pet-1",
@@ -777,9 +1015,11 @@ async def test_fetch_state_stores_only_walk_results_after_core_state_validation(
                     "walkedDistanceInMeters": "125.5",
                 },
                 {"id": "pet-2"},
+                {"id": "pet-3"},
             ],
         }
     ]
+    json.dumps(state.walks, allow_nan=False)
     assert [url for url, _headers in session.gets][-1] == (
         "https://api.example/walk/my?page=1&pageSize=10"
     )

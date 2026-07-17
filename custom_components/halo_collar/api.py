@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -27,6 +28,8 @@ _LOGGER = logging.getLogger(__name__)
 def _safe_walk_number_or_string(value: Any) -> int | float | str | None:
     """Keep only scalar walk metrics the fail-soft extractors can normalize."""
     if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        return None
+    if isinstance(value, float) and not math.isfinite(value):
         return None
     return value
 
@@ -120,8 +123,12 @@ class HaloApiClient:
         )
         if not isinstance(pets, list):
             raise HaloApiError("Halo pet state response was not a list")
+        if not all(isinstance(pet, dict) for pet in pets):
+            raise HaloApiError("Halo pet state response contained a non-object item")
         if not isinstance(collars, list):
             raise HaloApiError("Halo collar state response was not a list")
+        if not all(isinstance(collar, dict) for collar in collars):
+            raise HaloApiError("Halo collar state response contained a non-object item")
         if not isinstance(subscription, dict):
             raise HaloApiError("Halo subscription state response was not an object")
 
@@ -161,8 +168,8 @@ class HaloApiClient:
             status, payload = await self._async_get_with_retry(path)
             if status == 401:
                 raise HaloAuthError(f"GET {path} unauthorized even after a token refresh")
-        if status >= 400:
-            raise HaloApiError(f"GET {path} failed: HTTP {status}: {str(payload)[:200]}")
+        if not 200 <= status < 300:
+            raise HaloApiError(f"GET {path} failed: HTTP {status}")
         return payload
 
     async def async_set_fences_enabled(
@@ -220,14 +227,14 @@ class HaloApiClient:
                     raise HaloCollarNotFound("Halo collar was not found")
                 if not 200 <= response.status < 300:
                     raise HaloWriteOutcomeUnknown(
-                        f"PUT {path} returned HTTP {response.status}; outcome is unknown"
+                        f"Halo API write returned HTTP {response.status}; outcome is unknown"
                     )
         except (HaloCollarNotFound, HaloWriteOutcomeUnknown):
             raise
-        except (TimeoutError, aiohttp.ClientError, ValueError) as err:
+        except (TimeoutError, aiohttp.ClientError, ValueError):
             raise HaloWriteOutcomeUnknown(
-                f"PUT {path} dispatch failed; outcome is unknown"
-            ) from err
+                "Halo API write dispatch failed; outcome is unknown"
+            ) from None
         finally:
             release = getattr(response, "release", None)
             if callable(release):
@@ -248,27 +255,26 @@ class HaloApiClient:
                 if response.status == 401:
                     await response.text()
                     raise HaloWriteOutcomeUnknown(
-                        f"PUT {path} returned HTTP 401; write was not retried "
+                        "Halo API write returned HTTP 401; write was not retried "
                         "because outcome is unknown"
                     )
                 if not 200 <= response.status < 300:
-                    text = await response.text()
+                    await response.text()
                     raise HaloWriteOutcomeUnknown(
-                        f"PUT {path} returned HTTP {response.status}; "
-                        f"outcome is unknown: {text[:200]}"
+                        f"Halo API write returned HTTP {response.status}; outcome is unknown"
                     )
                 result = await response.json(content_type=None)
                 if not isinstance(result, dict):
                     raise HaloWriteOutcomeUnknown(
-                        f"PUT {path} returned an invalid success response; outcome is unknown"
+                        "Halo API write returned an invalid success response; outcome is unknown"
                     )
                 return result
         except HaloWriteOutcomeUnknown:
             raise
-        except (TimeoutError, aiohttp.ClientError, ValueError) as err:
+        except (TimeoutError, aiohttp.ClientError, ValueError):
             raise HaloWriteOutcomeUnknown(
-                f"PUT {path} dispatch or response processing failed; outcome is unknown"
-            ) from err
+                "Halo API write dispatch or response processing failed; outcome is unknown"
+            ) from None
         finally:
             release = getattr(response, "release", None)
             if callable(release):
@@ -290,10 +296,10 @@ class HaloApiClient:
                 headers=self._headers(),
                 allow_redirects=False,
             )
-        except aiohttp.ClientError as err:
+        except aiohttp.ClientError:
             raise HaloWriteOutcomeUnknown(
-                f"PUT {path} transport failed after dispatch; outcome is unknown: {err!r}"
-            ) from err
+                "Halo API write transport failed after dispatch; outcome is unknown"
+            ) from None
 
     async def _async_get_with_retry(self, path: str) -> tuple[int, Any]:
         """Complete a GET under one bounded attempt budget, with safe retries."""
@@ -308,9 +314,10 @@ class HaloApiClient:
                     response = await self._session.get(
                         f"{self._api_base}{path}",
                         headers=self._headers(),
+                        allow_redirects=False,
                     )
                     status = response.status
-                    if status >= 400:
+                    if not 200 <= status < 300:
                         payload: Any = await response.text()
                     else:
                         payload = await response.json(content_type=None)
@@ -381,13 +388,14 @@ class HaloApiClient:
                     f"{self._auth_base}/connect/token",
                     data=data,
                     headers=self._token_headers(),
+                    allow_redirects=False,
                 )
-                text = await response.text()
+                await response.text()
+                if 300 <= response.status < 400:
+                    raise HaloApiError(f"Token endpoint returned HTTP {response.status}")
                 if response.status >= 500:
                     # Identity-server outage, not bad credentials; must not trigger reauth.
-                    raise HaloApiError(
-                        f"Token endpoint error: HTTP {response.status}: {text[:200]}"
-                    )
+                    raise HaloApiError(f"Token endpoint error: HTTP {response.status}")
                 payload = await response.json(content_type=None)
         except HaloApiError:
             raise
@@ -406,20 +414,33 @@ class HaloApiClient:
         if response is None:
             raise HaloApiError("Token request completed without a response")
         if response.status >= 400:
-            _LOGGER.warning(
-                "Halo token request rejected: HTTP %s, oauth_error=%s, description=%s",
-                response.status,
-                payload.get("error") if isinstance(payload, dict) else None,
-                payload.get("error_description") if isinstance(payload, dict) else text[:200],
-            )
-            raise HaloAuthError(f"Token request failed: HTTP {response.status}: {payload}")
-        if not isinstance(payload, dict) or "access_token" not in payload:
-            raise HaloAuthError(f"Token request returned no access_token: {payload}")
-        self._access_token = payload["access_token"]
-        self._refresh_token = payload.get("refresh_token", self._refresh_token)
-        self._expires_at = (
-            time.time() + int(payload.get("expires_in", 0)) - TOKEN_REFRESH_SKEW_SECONDS
-        )
+            _LOGGER.warning("Halo token request rejected: HTTP %s", response.status)
+            raise HaloAuthError(f"Token request failed: HTTP {response.status}")
+        if not isinstance(payload, dict):
+            raise HaloApiError("Token request returned an invalid success payload")
+        access_token = payload.get("access_token")
+        refresh_token = payload.get("refresh_token", self._refresh_token)
+        expires_in = payload.get("expires_in")
+        if not isinstance(access_token, str) or not access_token:
+            raise HaloAuthError("Token request returned no access_token")
+        if not isinstance(refresh_token, str) or not refresh_token:
+            raise HaloApiError("Token request returned an invalid refresh_token")
+        if isinstance(expires_in, bool) or not isinstance(expires_in, (int, float)):
+            raise HaloApiError("Token request returned an invalid expires_in")
+        try:
+            expires_in_seconds = float(expires_in)
+        except (OverflowError, ValueError):
+            raise HaloApiError("Token request returned an invalid expires_in") from None
+        if (
+            not math.isfinite(expires_in_seconds)
+            or expires_in_seconds <= TOKEN_REFRESH_SKEW_SECONDS
+        ):
+            raise HaloApiError("Token request returned an invalid expires_in")
+
+        # Commit the fully validated token set atomically.
+        self._access_token = access_token
+        self._refresh_token = refresh_token
+        self._expires_at = time.time() + expires_in_seconds - TOKEN_REFRESH_SKEW_SECONDS
 
     def _headers(self) -> dict[str, str]:
         return {

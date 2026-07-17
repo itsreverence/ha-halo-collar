@@ -129,6 +129,21 @@ class BlockingClient(FakeClient):
         return {"ok": True}
 
 
+class BlockingBeforeDispatchClient(FakeClient):
+    def __init__(self):
+        super().__init__()
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def async_set_fences_enabled(self, pet_id, *, enabled, pre_dispatch=None):
+        self.started.set()
+        await self.release.wait()
+        if pre_dispatch is not None:
+            pre_dispatch()
+        self.writes.append((pet_id, enabled))
+        return {"ok": True}
+
+
 def _entry(*, enable=True, allow_disable=False):
     return SimpleNamespace(
         options={
@@ -514,6 +529,33 @@ async def test_cancellation_after_dispatch_waits_for_reconciliation_and_lock_rel
 
 
 @pytest.mark.asyncio
+async def test_cancellation_before_dispatch_cancels_inner_fence_task_without_write():
+    coordinator = FakeCoordinator([(_pet(fences_on=False), _collar())])
+    client = BlockingBeforeDispatchClient()
+    control_lock = asyncio.Lock()
+    action_task = asyncio.create_task(
+        _execute(
+            coordinator,
+            client,
+            _entry(),
+            enabled=True,
+            control_lock=control_lock,
+        )
+    )
+    await client.started.wait()
+
+    action_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await action_task
+
+    client.release.set()
+    await asyncio.sleep(0)
+    assert client.writes == []
+    assert coordinator.refreshes == 1
+    assert control_lock.locked() is False
+
+
+@pytest.mark.asyncio
 async def test_contradictory_transactions_share_one_collar_lock():
     coordinator = FakeCoordinator(
         [(_pet(fences_on=False), _collar()), (_pet(fences_on=True), _collar())]
@@ -608,6 +650,20 @@ class BlockingFindClient(FakeFindClient):
         self.writes.append(collar_id)
         self.started.set()
         await self.release.wait()
+
+
+class BlockingBeforeDispatchFindClient(FakeFindClient):
+    def __init__(self):
+        super().__init__()
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def async_find_collar(self, collar_id, *, pre_dispatch=None):
+        self.started.set()
+        await self.release.wait()
+        if pre_dispatch is not None:
+            pre_dispatch()
+        self.writes.append(collar_id)
 
 
 def _find_entry(*, enabled=True):
@@ -976,3 +1032,32 @@ async def test_find_collar_cancellation_finishes_committed_phase_and_releases_lo
     assert coordinator.refreshes == 2
     assert control_lock.locked() is False
     assert client.writes == ["collar-1"]
+
+
+@pytest.mark.asyncio
+async def test_find_collar_cancellation_before_dispatch_has_no_write_or_cooldown():
+    coordinator = FakeCoordinator([(_pet(), _collar(), _subscription())])
+    client = BlockingBeforeDispatchFindClient()
+    control_lock = asyncio.Lock()
+    cooldowns = {}
+    task = asyncio.create_task(
+        _execute_find(
+            coordinator,
+            client,
+            _find_entry(),
+            control_lock=control_lock,
+            cooldowns=cooldowns,
+        )
+    )
+    await client.started.wait()
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    client.release.set()
+    await asyncio.sleep(0)
+    assert client.writes == []
+    assert cooldowns == {}
+    assert coordinator.refreshes == 1
+    assert control_lock.locked() is False

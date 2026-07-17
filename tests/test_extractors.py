@@ -558,6 +558,14 @@ def test_sensor_extractors_cover_live_payload_shape():
     assert values["firmware"] == "03.06.64"
 
 
+def test_sensor_extractors_fail_soft_when_telemetry_container_is_malformed():
+    values = sensor_values({"telemetry": ["unexpected", {"private": "value"}]})
+
+    assert values["battery"] is None
+    assert values["last_telemetry"] is None
+    assert values["wifi_status"] is None
+
+
 def test_online_uses_manifest_timestamp_freshness():
     collar = {"telemetry": {"manifest": {"timestamp": datetime.now(UTC).isoformat()}}}
 

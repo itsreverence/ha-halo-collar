@@ -88,6 +88,28 @@ async def async_setup_entry(hass, entry) -> bool:
         entry,
         [Platform(p) for p in PLATFORMS],
     )
+
+    known_collar_ids = {
+        collar.get("id")
+        for collar in coordinator.data.collars
+        if isinstance(collar.get("id"), str) and collar.get("id")
+    }
+    inventory_reload_pending = False
+
+    def _reload_for_new_collars() -> None:
+        nonlocal inventory_reload_pending
+        if inventory_reload_pending:
+            return
+        current_collar_ids = {
+            collar.get("id")
+            for collar in coordinator.data.collars
+            if isinstance(collar.get("id"), str) and collar.get("id")
+        }
+        if current_collar_ids - known_collar_ids:
+            inventory_reload_pending = True
+            hass.async_create_task(hass.config_entries.async_reload(entry.entry_id))
+
+    entry.async_on_unload(coordinator.async_add_listener(_reload_for_new_collars))
     return True
 
 
@@ -111,9 +133,11 @@ async def _async_entry_updated(hass, entry) -> None:
 def _persist_tokens(hass, entry, client) -> None:
     """Write refreshed tokens back to the config entry so they survive restarts."""
     snapshot = client.token_snapshot
-    if snapshot["access_token"] == entry.data.get(CONF_ACCESS_TOKEN) and snapshot[
-        "refresh_token"
-    ] == entry.data.get(CONF_REFRESH_TOKEN):
+    if (
+        snapshot["access_token"] == entry.data.get(CONF_ACCESS_TOKEN)
+        and snapshot["refresh_token"] == entry.data.get(CONF_REFRESH_TOKEN)
+        and snapshot["expires_at"] == entry.data.get(CONF_EXPIRES_AT)
+    ):
         return
     hass.config_entries.async_update_entry(
         entry,
