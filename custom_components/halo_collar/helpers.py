@@ -155,28 +155,35 @@ def subscription_feature_enabled(subscription: Any, feature_id: str) -> bool:
     if not isinstance(features, list):
         return False
 
-    def _feature_id(feature: Any) -> str | None:
+    def _feature_identifiers(feature: Any) -> tuple[set[str], bool]:
+        """Return normalized identifiers and whether their envelope conflicts."""
         if not isinstance(feature, dict):
-            return None
+            return set(), False
         identifiers: list[str] = []
+        malformed = False
         if "id" in feature:
-            if not isinstance(feature["id"], str):
-                return None
-            identifiers.append(feature["id"])
+            if isinstance(feature["id"], str):
+                identifiers.append(feature["id"])
+            else:
+                malformed = True
         if "featureType" in feature:
             feature_type = feature["featureType"]
-            if not isinstance(feature_type, dict) or not isinstance(feature_type.get("id"), str):
-                return None
-            identifiers.append(feature_type["id"])
+            if isinstance(feature_type, dict) and isinstance(feature_type.get("id"), str):
+                identifiers.append(feature_type["id"])
+            else:
+                malformed = True
         normalized_ids = {identifier.casefold() for identifier in identifiers}
-        return identifiers[0] if len(normalized_ids) == 1 else None
+        return normalized_ids, malformed or len(normalized_ids) > 1
 
     normalized = feature_id.casefold()
     matches = []
     for feature in features:
-        candidate = _feature_id(feature)
-        if candidate is not None and candidate.casefold() == normalized:
-            matches.append(feature)
+        identifiers, conflicting = _feature_identifiers(feature)
+        if normalized not in identifiers:
+            continue
+        if conflicting:
+            return False
+        matches.append(feature)
     return len(matches) == 1 and matches[0].get("isEnabled") is True
 
 

@@ -687,6 +687,38 @@ def test_find_collar_entitlement_requires_one_enabled_exact_feature():
         )
         is False
     )
+    assert (
+        subscription_feature_enabled(
+            {
+                "features": [
+                    {"id": "findcollar", "isEnabled": True},
+                    {
+                        "id": "findcollar",
+                        "featureType": {"id": "other"},
+                        "isEnabled": True,
+                    },
+                ]
+            },
+            "findcollar",
+        )
+        is False
+    )
+    assert (
+        subscription_feature_enabled(
+            {
+                "features": [
+                    {"id": "findcollar", "isEnabled": True},
+                    {
+                        "id": "findcollar",
+                        "featureType": "malformed",
+                        "isEnabled": True,
+                    },
+                ]
+            },
+            "findcollar",
+        )
+        is False
+    )
     assert subscription_feature_enabled({"features": "malformed"}, "findcollar") is False
     assert subscription_feature_enabled({}, "findcollar") is False
 
