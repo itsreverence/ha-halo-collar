@@ -1,7 +1,7 @@
 [project]
 name = "ha-halo-collar"
-version = "0.5.0"
-description = "Home Assistant integration for Halo Collar telemetry and guarded fence controls"
+version = "0.6.0"
+description = "Home Assistant integration for Halo Collar telemetry and guarded opt-in controls"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
