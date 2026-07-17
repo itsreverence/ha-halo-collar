@@ -2,7 +2,7 @@
 
 ## Purpose
 
-`ha-halo-collar` is a telemetry-first Home Assistant custom integration for Halo Collar cloud data, with narrowly scoped fence controls that are disabled by default. It is built on Halo's unofficial mobile/cloud API and is not affiliated with or supported by the vendor.
+`ha-halo-collar` is a telemetry-first Home Assistant custom integration for Halo Collar cloud data, with narrowly scoped physical controls that are disabled by default. It is built on Halo's unofficial mobile/cloud API and is not affiliated with or supported by the vendor.
 
 ## Runtime shape
 
@@ -17,9 +17,12 @@ Home Assistant config entry (email + stored tokens; password is never persisted)
      -> persists refreshed tokens back to the config entry
      -> raises ConfigEntryAuthFailed to trigger reauth when credentials fail
   -> platforms expose telemetry entities plus disabled-by-default controls
-     -> serialized per config entry across option-triggered reloads; one PUT /pet/{id}/instant-mode with {modePatch: {fencesOn: bool}}
+     -> fence mode: one PUT /pet/{id}/instant-mode with {modePatch: {fencesOn: bool}}
+     -> Find collar: one bodyless PUT /collar/{id}/find; Return Whistle sounds/blinks for 10 seconds
+     -> all physical commands serialized per config entry across option-triggered reloads
      -> redirects disabled; no write replay after an ambiguous HTTP/network result, including 401
-     -> fresh preflight plus read-only reconciliation and reported-state confirmation on every dispatched outcome
+     -> fresh preflight and dispatch-boundary revalidation for exact identity, options, and telemetry
+     -> fence writes reconcile reported state; Find collar has no durable confirmation state and retains a cooldown after every dispatch
 ```
 
 ## Platforms
@@ -28,7 +31,7 @@ Home Assistant config entry (email + stored tokens; password is never persisted)
 - `binary_sensor`: connectivity (staleness threshold configurable via options), fence breach, fence mode, fence synchronization, GPS calibration required, compass calibration required, active walk/paused state, collar reporting issue, and firmware update availability.
 - `device_tracker`: pet/collar GPS tracker when Halo returns usable coordinates; pins the pet to `home` while the collar reports indoors on its configured Wi-Fi (GPS is unreliable indoors).
 - `event`: fence breach event entity for automation triggers.
-- `button`: fail-safe idempotent fence enable, available only after the first control opt-in.
+- `button`: fail-safe idempotent fence enable after the fence-control opt-in; separately opted-in Find collar physical Return Whistle after fresh identity/telemetry/entitlement checks and subject to a post-dispatch cooldown.
 - `switch`: full fence mode including disable, available only after the separate high-risk opt-in.
 - `diagnostics`: redacted config-entry diagnostics (tokens, serials, coordinates, names removed).
 
@@ -42,9 +45,11 @@ The repository must not contain real user access/refresh tokens, account credent
 
 ## Safety boundary
 
-The default installation is telemetry-only. The reviewed fence-mode endpoint is available only through two explicit option tiers: enable-only, then full on/off. Entity service actions share one domain-level config-entry transaction lock that survives option-triggered reloads and force non-debounced cloud refreshes before validating the current options, snapshot-wide one-to-one relationship mapping, and telemetry rather than trusting UI availability or cached state. A write is issued at most once with automatic redirects disabled; after any token refresh and at every immediate transport-dispatch boundary, the client revalidates options, telemetry freshness, disable-specific safety state, and the exact pet/collar IDs captured by preflight. Concurrent token refreshes are serialized and double-checked so a rotated refresh token is used only once. The client never replays an ambiguous HTTP/network outcome (including 401). Successful responses, post-dispatch failures, and caller cancellation all retain the transaction lock through read-only reconciliation; confirmation must still match the original pet/collar IDs, synchronized reported state, and fresh telemetry. Fence-off additionally requires synchronized reported mode and no active walk; rejected or unconfirmed transitions surface an error directing the user to the official app.
+The default installation is telemetry-only. Fence controls and Find collar use separate explicit option tiers. Entity service actions share one domain-level config-entry transaction lock that survives option-triggered reloads and force non-debounced cloud refreshes before validating current options, subscription entitlement where required, snapshot-wide one-to-one relationship mapping, and telemetry rather than trusting UI availability or cached state. A command is issued at most once with automatic redirects disabled; after any token refresh and at every immediate transport-dispatch boundary, the client revalidates options, telemetry freshness, command-specific safety state, and the exact pet/collar IDs captured by preflight. Concurrent token refreshes are serialized and double-checked so a rotated refresh token is used only once. The client never replays an ambiguous HTTP/network outcome, including 401.
 
-Do not add corrections, fence geometry writes, collar wake/control, bind/unbind, account mutation, or proprietary BLE walk-start behavior without a separate explicit review. Cloud pause/stop for an already active walk may be investigated later, but must account for the official app's local walk database and post-processing lifecycle.
+Fence writes retain the transaction lock through read-only reconciliation and require fresh synchronized reported-state confirmation. Fence-off additionally requires no active walk. Find collar is Halo's physical Return Whistle: the collar blinks and plays a sound for 10 seconds, which Halo warns may confuse a pet wearing it. It requires its own opt-in, an enabled `findcollar` subscription feature, fresh uniquely mapped telemetry, no active or unknown walk, and a reload-stable per-collar cooldown started immediately before dispatch. The bodyless endpoint exposes no durable reported sound/light state, so read-only refresh cannot confirm physical execution; provider success is reported as command success, while 404 and ambiguous outcomes remain errors and are never retried.
+
+Do not add corrections, fence geometry writes, other collar wake/control actions, bind/unbind, account mutation, or proprietary BLE walk-start behavior without a separate explicit review. Cloud pause/stop for an already active walk may be investigated later, but must account for the official app's local walk database and post-processing lifecycle.
 
 ## Error handling
 

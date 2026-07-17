@@ -38,12 +38,14 @@
           "scan_interval": "Update interval (seconds)",
           "stale_after": "Offline after (seconds)",
           "enable_fence_controls": "Enable fail-safe fence controls",
+          "enable_find_collar": "Enable Find collar sound and light",
           "allow_fence_disable": "Allow fences to be disabled"
         },
         "data_description": {
           "scan_interval": "How often to poll the Halo cloud for new telemetry. Between 60 and 3600 seconds; the collar itself typically reports every few minutes.",
           "stale_after": "How long after the collar's last report the connectivity sensor turns off. Between 120 and 86400 seconds.",
           "enable_fence_controls": "Adds an idempotent Enable fences button. Controls remain unavailable when collar telemetry is stale.",
+          "enable_find_collar": "Adds a manual button that makes the collar blink and play a sound for 10 seconds. Halo warns this may confuse a pet wearing it. The command is blocked on stale/ambiguous state, active or unknown walks, missing subscription entitlement, and a post-dispatch cooldown; ambiguous outcomes are never retried.",
           "allow_fence_disable": "Also adds a Fence mode switch that can disable containment. This is a separate high-risk opt-in and is blocked during an active walk."
         }
       }
@@ -92,7 +94,8 @@
       "firmware_update_available": {"name": "Firmware update available"}
     },
     "button": {
-      "enable_fences": {"name": "Enable fences"}
+      "enable_fences": {"name": "Enable fences"},
+      "find_collar": {"name": "Find collar (sound and light)"}
     },
     "switch": {
       "fence_mode": {"name": "Fence mode"}

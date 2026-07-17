@@ -65,6 +65,10 @@ class HaloAuthError(HaloApiError):
     """Raised when Halo authentication (login or token refresh) fails."""
 
 
+class HaloCollarNotFound(HaloApiError):
+    """Raised when Halo definitively reports that the target collar was not found."""
+
+
 class HaloWriteOutcomeUnknown(HaloApiError):
     """Raised when a dispatched write may have reached Halo but was not confirmed."""
 
@@ -178,6 +182,56 @@ class HaloApiClient:
         payload = {"modePatch": {"fencesOn": enabled}}
         path = f"/pet/{quote(pet_id, safe='')}/instant-mode"
         return await self._async_put_json(path, payload, pre_dispatch=pre_dispatch)
+
+    async def async_find_collar(
+        self,
+        collar_id: str,
+        *,
+        pre_dispatch: Callable[[], None] | None = None,
+    ) -> None:
+        """Ask one collar to blink and play Halo's ten-second Return Whistle.
+
+        This physical command has no response body or durable confirmation state.
+        It is sent at most once and is never retried after dispatch.
+        """
+        if not collar_id:
+            raise HaloApiError("Collar ID is required to find a collar")
+        path = f"/collar/{quote(collar_id, safe='')}/find"
+        await self._async_put_no_content(path, pre_dispatch=pre_dispatch)
+
+    async def _async_put_no_content(
+        self,
+        path: str,
+        *,
+        pre_dispatch: Callable[[], None] | None = None,
+    ) -> None:
+        await self._async_refresh_if_needed()
+        response = None
+        try:
+            async with asyncio.timeout(REQUEST_TIMEOUT_SECONDS):
+                if pre_dispatch is not None:
+                    pre_dispatch()
+                response = await self._session.put(
+                    f"{self._api_base}{path}",
+                    headers=self._headers(),
+                    allow_redirects=False,
+                )
+                if response.status == 404:
+                    raise HaloCollarNotFound("Halo collar was not found")
+                if not 200 <= response.status < 300:
+                    raise HaloWriteOutcomeUnknown(
+                        f"PUT {path} returned HTTP {response.status}; outcome is unknown"
+                    )
+        except (HaloCollarNotFound, HaloWriteOutcomeUnknown):
+            raise
+        except (TimeoutError, aiohttp.ClientError, ValueError) as err:
+            raise HaloWriteOutcomeUnknown(
+                f"PUT {path} dispatch failed; outcome is unknown"
+            ) from err
+        finally:
+            release = getattr(response, "release", None)
+            if callable(release):
+                release()
 
     async def _async_put_json(
         self,

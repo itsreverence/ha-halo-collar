@@ -147,6 +147,25 @@ def pet_for_collar(
     return pet_match
 
 
+def subscription_feature_enabled(subscription: Any, feature_id: str) -> bool:
+    """Fail closed unless exactly one subscription feature is explicitly enabled."""
+    if not isinstance(subscription, dict) or not isinstance(feature_id, str):
+        return False
+    features = subscription.get("features")
+    if not isinstance(features, list):
+        return False
+    normalized = feature_id.casefold()
+    matches = [
+        feature
+        for feature in features
+        if isinstance(feature, dict)
+        and isinstance(feature.get("featureType"), dict)
+        and isinstance(feature["featureType"].get("id"), str)
+        and feature["featureType"]["id"].casefold() == normalized
+    ]
+    return len(matches) == 1 and matches[0].get("isEnabled") is True
+
+
 def pet_fences_enabled(pet: dict[str, Any] | None) -> bool | None:
     """Return only the collar-reported fence mode, never desired state."""
     reported = nested(pet or {}, "telemetry", "mode", "fencesOn")

@@ -20,6 +20,7 @@ from custom_components.halo_collar.const import (
     CONF_CLIENT_ID,
     CONF_CLIENT_SECRET,
     CONF_ENABLE_FENCE_CONTROLS,
+    CONF_ENABLE_FIND_COLLAR,
     CONF_EXPIRES_AT,
     CONF_REFRESH_TOKEN,
     CONF_SCAN_INTERVAL,
@@ -35,6 +36,7 @@ class FakeHaloClient:
         self.state = state
         self.fetches = 0
         self.writes = []
+        self.finds = []
         self._snapshot = {
             "access_token": "access",
             "refresh_token": "refresh",
@@ -54,6 +56,11 @@ class FakeHaloClient:
             pre_dispatch()
         self.writes.append((pet_id, enabled))
         return {"ok": True}
+
+    async def async_find_collar(self, collar_id, *, pre_dispatch=None):
+        if pre_dispatch is not None:
+            pre_dispatch()
+        self.finds.append(collar_id)
 
 
 class FailingHaloClient(FakeHaloClient):
@@ -123,6 +130,12 @@ def _state(*, indoors: bool = False, walks: list[dict] | None = None):
             "isApplicationUsageAllowed": True,
             "maxCollarsCount": 2,
             "maxGeoFencesCount": 20,
+            "features": [
+                {
+                    "featureType": {"id": "findcollar"},
+                    "isEnabled": True,
+                }
+            ],
         },
         server_time=timestamp,
         walks=[] if walks is None else walks,
@@ -178,6 +191,7 @@ async def test_runtime_setup_registers_platforms_and_guarded_control_surface(has
     assert entry.state is ConfigEntryState.LOADED
     assert client.fetches == 1
     assert hass.states.get("button.cowboy_enable_fences") is not None
+    assert hass.states.get("button.cowboy_find_collar_sound_and_light") is None
     assert hass.states.get("switch.cowboy_fence_mode") is None
     assert hass.states.get("device_tracker.cowboy") is not None
     assert hass.states.get("event.cowboy_fence_breach_event") is not None
@@ -231,6 +245,32 @@ async def test_runtime_setup_registers_platforms_and_guarded_control_surface(has
     assert subscription.attributes["application_usage_allowed"] is True
     assert subscription.attributes["max_collars"] == 2
     assert subscription.attributes["max_fences"] == 20
+
+
+async def test_find_collar_button_is_opt_in_and_dispatches_one_synthetic_command(hass):
+    client = FakeHaloClient(_state())
+    entry = _entry({CONF_ENABLE_FIND_COLLAR: True})
+    entry.add_to_hass(hass)
+
+    await _setup(hass, entry, client)
+
+    collar_id = client.state.collars[0]["id"]
+    entity_id = er.async_get(hass).async_get_entity_id("button", DOMAIN, f"{collar_id}_find_collar")
+    assert entity_id == "button.cowboy_find_collar_sound_and_light"
+    assert hass.states.get(entity_id).state != STATE_UNAVAILABLE
+
+    await hass.services.async_call(
+        "button",
+        "press",
+        {"entity_id": entity_id},
+        blocking=True,
+    )
+    await hass.async_block_till_done()
+
+    assert client.finds == ["collar-1"]
+    assert client.writes == []
+    assert client.fetches == 3
+    assert hass.states.get(entity_id).state == STATE_UNAVAILABLE
 
 
 async def test_runtime_insight_sensor_updates_after_coordinator_refresh(hass):
