@@ -71,7 +71,7 @@ def _state(*, indoors: bool = False, walks: list[dict] | None = None):
     pet = {
         "id": "pet-1",
         "name": "Cowboy",
-        "collarInfo": {"id": "collar-1"},
+        "collarInfo": {"id": "collar-1", "telemetry": {"walk": None}},
         "isFencesSynchronized": True,
         "fencesState": "upToDate",
         "metrics": {
@@ -86,7 +86,6 @@ def _state(*, indoors: bool = False, walks: list[dict] | None = None):
         },
         "telemetry": {
             "mode": {"fencesOn": True},
-            "walk": None,
             "safetyStatus": "safe",
             "geoFence": {"name": "Synthetic Fence", "id": "excluded"},
         },
@@ -444,13 +443,44 @@ async def test_runtime_active_walk_entity_is_unknown_when_walk_fields_are_missin
     coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
     collar_id = client.state.collars[0]["id"]
 
-    client.state.pets[0]["telemetry"].pop("walk")
+    client.state.pets[0]["collarInfo"]["telemetry"].pop("walk")
     client.state.collars[0]["telemetry"].pop("walk")
     await coordinator.async_refresh()
     await hass.async_block_till_done()
 
     active_walk = _state_for_unique_id(hass, "binary_sensor", f"{collar_id}_active_walk")
     assert active_walk.state == STATE_UNKNOWN
+
+
+async def test_runtime_active_walk_entity_tracks_verified_collar_snapshots(hass):
+    client = FakeHaloClient(_state())
+    entry = _entry({})
+    entry.add_to_hass(hass)
+    await _setup(hass, entry, client)
+    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    collar_id = client.state.collars[0]["id"]
+
+    active_walk_unique_id = f"{collar_id}_active_walk"
+    assert _state_for_unique_id(hass, "binary_sensor", active_walk_unique_id).state == "off"
+
+    synthetic_walk = {"durationFromStartInSeconds": 60, "isPaused": False}
+    client.state.pets[0]["collarInfo"]["telemetry"]["walk"] = synthetic_walk
+    client.state.collars[0]["telemetry"]["walk"] = synthetic_walk
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+    assert _state_for_unique_id(hass, "binary_sensor", active_walk_unique_id).state == STATE_ON
+
+    client.state.pets[0]["collarInfo"]["telemetry"]["walk"] = None
+    client.state.collars[0]["telemetry"]["walk"] = None
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+    assert _state_for_unique_id(hass, "binary_sensor", active_walk_unique_id).state == "off"
+
+    client.state.pets[0]["collarInfo"]["telemetry"].pop("walk")
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+    assert _state_for_unique_id(hass, "binary_sensor", active_walk_unique_id).state == STATE_UNKNOWN
+    assert client.writes == []
 
 
 async def test_runtime_subscription_entity_fails_soft_on_empty_and_malformed_payloads(hass):

@@ -194,18 +194,33 @@ def test_pet_mapping_fails_closed_when_two_collars_claim_one_pet():
 
 
 def test_active_walk_state_distinguishes_present_null_from_unknown_walk_telemetry():
-    assert active_walk_state({"telemetry": {"walk": {"synthetic": True}}}, {}) is True
-    assert active_walk_state({}, {"telemetry": {"walk": "invalid"}}) is True
-    assert active_walk_state({"telemetry": {"walk": None}}, {"telemetry": {"walk": None}}) is False
+    pet = {"collarInfo": {"telemetry": {"walk": {"synthetic": True}}}}
+    assert active_walk_state(pet, {}) is True
+    assert active_walk_state({}, {"telemetry": {"walk": "invalid"}}) is None
+    idle_pet = {"collarInfo": {"telemetry": {"walk": None}}}
+    assert active_walk_state(idle_pet, {"telemetry": {"walk": None}}) is False
     assert active_walk_state({}, {"telemetry": {"walk": None}}) is None
-    assert active_walk_state({"telemetry": []}, {"telemetry": {"walk": None}}) is None
+    assert (
+        active_walk_state({"collarInfo": {"telemetry": []}}, {"telemetry": {"walk": None}}) is None
+    )
+
+
+def test_active_walk_state_fails_safe_on_conflicting_or_malformed_snapshots():
+    active_pet = {"collarInfo": {"telemetry": {"walk": {"synthetic": True}}}}
+    idle_collar = {"telemetry": {"walk": None}}
+    assert active_walk_state(active_pet, idle_collar) is True
+
+    malformed_pet = {"collarInfo": {"telemetry": {"walk": "invalid"}}}
+    assert active_walk_state(malformed_pet, idle_collar) is None
 
 
 def test_has_active_walk_fails_closed_when_walk_telemetry_is_unknown():
-    assert has_active_walk({"telemetry": {"walk": {"synthetic": True}}}, {}) is True
-    assert has_active_walk({"telemetry": {"walk": None}}, {"telemetry": {"walk": None}}) is False
+    active_pet = {"collarInfo": {"telemetry": {"walk": {"synthetic": True}}}}
+    idle_pet = {"collarInfo": {"telemetry": {"walk": None}}}
+    assert has_active_walk(active_pet, {}) is True
+    assert has_active_walk(idle_pet, {"telemetry": {"walk": None}}) is False
     assert has_active_walk({}, {"telemetry": {"walk": None}}) is True
-    assert has_active_walk({"telemetry": []}, {"telemetry": {"walk": None}}) is True
+    assert has_active_walk({"collarInfo": {"telemetry": []}}, {"telemetry": {"walk": None}}) is True
 
 
 def test_activity_and_goal_extractors_are_fail_soft_and_bounded():
@@ -314,8 +329,9 @@ def test_next_expected_telemetry_returns_none_for_finite_overflowing_intervals()
 def test_fence_disable_preflight_requires_fresh_synchronized_reported_state():
     collar = {"telemetry": {"manifest": {"timestamp": datetime.now(UTC).isoformat()}, "walk": None}}
     pet = {
+        "collarInfo": {"telemetry": {"walk": None}},
         "isFencesSynchronized": True,
-        "telemetry": {"mode": {"fencesOn": True}, "walk": None},
+        "telemetry": {"mode": {"fencesOn": True}},
     }
 
     assert fence_disable_block_reason(pet, collar, stale_after=900) is None
@@ -324,14 +340,14 @@ def test_fence_disable_preflight_requires_fresh_synchronized_reported_state():
         == "Halo has not confirmed synchronized fence state"
     )
     assert (
-        fence_disable_block_reason({**pet, "telemetry": {"walk": None}}, collar, stale_after=900)
+        fence_disable_block_reason({**pet, "telemetry": {}}, collar, stale_after=900)
         == "Halo has not reported current fence mode"
     )
     assert (
         fence_disable_block_reason(
             {
                 **pet,
-                "telemetry": {"mode": {"fencesOn": True}, "walk": {"id": "walk-1"}},
+                "collarInfo": {"telemetry": {"walk": {"id": "walk-1"}}},
             },
             collar,
             stale_after=900,
@@ -348,12 +364,13 @@ def test_fence_disable_preflight_requires_fresh_synchronized_reported_state():
 def test_fence_disable_preflight_rejects_malformed_non_null_walk_telemetry():
     collar = {"telemetry": {"manifest": {"timestamp": datetime.now(UTC).isoformat()}, "walk": None}}
     pet = {
+        "collarInfo": {"telemetry": {"walk": None}},
         "isFencesSynchronized": True,
-        "telemetry": {"mode": {"fencesOn": True}, "walk": None},
+        "telemetry": {"mode": {"fencesOn": True}},
     }
 
     for pet_walk, collar_walk in (("malformed", None), (None, [])):
-        blocked_pet = {**pet, "telemetry": {**pet["telemetry"], "walk": pet_walk}}
+        blocked_pet = {**pet, "collarInfo": {"telemetry": {"walk": pet_walk}}}
         blocked_collar = {**collar, "telemetry": {**collar["telemetry"], "walk": collar_walk}}
         assert (
             fence_disable_block_reason(blocked_pet, blocked_collar, stale_after=900)

@@ -34,9 +34,9 @@ def _collar(*, fresh: bool = True, walk=None, timestamp=None):
 def _pet(*, fences_on: bool = True, synchronized: bool = True, walk=None):
     return {
         "id": "pet-1",
-        "collarInfo": {"id": "collar-1"},
+        "collarInfo": {"id": "collar-1", "telemetry": {"walk": walk}},
         "isFencesSynchronized": synchronized,
-        "telemetry": {"mode": {"fencesOn": fences_on}, "walk": walk},
+        "telemetry": {"mode": {"fencesOn": fences_on}},
     }
 
 
@@ -218,6 +218,13 @@ async def test_direct_disable_call_revalidates_option_before_refresh_or_write():
     [
         (_pet(synchronized=False), _collar(), "synchronized"),
         (_pet(walk={"id": "walk-1"}), _collar(), "active walk"),
+        (_pet(walk="malformed"), _collar(), "active walk"),
+        (
+            {**_pet(), "collarInfo": {"id": "collar-1", "telemetry": {}}},
+            _collar(),
+            "active walk",
+        ),
+        (_pet(), _collar(walk={"id": "walk-1"}), "active walk"),
         (_pet(), _collar(fresh=False), "stale"),
     ],
 )
