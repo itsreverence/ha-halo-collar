@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import email
 import json
+import struct
 import sys
 import tarfile
 import tomllib
@@ -10,6 +11,16 @@ from pathlib import Path
 
 RUNTIME_ROOT = "custom_components/halo_collar/"
 FORBIDDEN_RUNTIME_BYTES = (b"/home/", b"PRIVATE_", b"Cowboy")
+BRAND_IMAGE_DIMENSIONS = {
+    "brand/icon.png": (256, 256),
+    "brand/icon@2x.png": (512, 512),
+}
+
+
+def _png_dimensions(data: bytes) -> tuple[int, int]:
+    if len(data) < 24 or data[:8] != b"\x89PNG\r\n\x1a\n" or data[12:16] != b"IHDR":
+        raise ValueError("not a PNG with an IHDR header")
+    return struct.unpack(">II", data[16:24])
 
 
 def _source_runtime_files(repo: Path) -> set[str]:
@@ -31,6 +42,18 @@ def main() -> None:
 
     expected_version = tomllib.loads((repo / "pyproject.toml").read_text())["project"]["version"]
     expected_files = _source_runtime_files(repo)
+
+    for relative, expected_dimensions in BRAND_IMAGE_DIMENSIONS.items():
+        image_path = repo / RUNTIME_ROOT / relative
+        try:
+            dimensions = _png_dimensions(image_path.read_bytes())
+        except (OSError, ValueError) as err:
+            raise SystemExit(f"invalid brand image {relative}: {err}") from err
+        if dimensions != expected_dimensions:
+            raise SystemExit(
+                f"brand image dimension mismatch for {relative}: "
+                f"expected {expected_dimensions}, got {dimensions}"
+            )
 
     with zipfile.ZipFile(wheels[0]) as archive:
         wheel_files = {name for name in archive.namelist() if name.startswith(RUNTIME_ROOT)}

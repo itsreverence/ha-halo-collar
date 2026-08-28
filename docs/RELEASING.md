@@ -24,7 +24,14 @@ This checklist is for maintainers.
 
 Home Assistant 2026.3 and newer can load custom-integration assets from `custom_components/halo_collar/brand/`; older versions may show a placeholder. HACS may also lag Home Assistant's local-brand display support. See Home Assistant's [brand image documentation](https://developers.home-assistant.io/docs/core/integration/brand_images/) and [custom-integration brand announcement](https://developers.home-assistant.io/blog/2026/02/24/brands-proxy-api).
 
-Keep the icon square, transparent, trimmed, and at most 256×256; optional `@2x`, logo, and dark-theme variants may also be provided.
+Keep the icon square, transparent, and trimmed. Render both production icons from the shared `docs/assets/brand/icon.svg` source so their artwork cannot drift:
+
+```bash
+rsvg-convert -w 256 -h 256 docs/assets/brand/icon.svg -o custom_components/halo_collar/brand/icon.png
+rsvg-convert -w 512 -h 512 docs/assets/brand/icon.svg -o custom_components/halo_collar/brand/icon@2x.png
+```
+
+The standard `icon.png` must remain 256×256 and `icon@2x.png` must remain 512×512. Optional logo and dark-theme variants may also be provided.
 
 Use only original or properly licensed artwork. Do not copy Halo's trademarked logo for this unofficial integration.
 

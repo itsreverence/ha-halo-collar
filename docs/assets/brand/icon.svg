@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="background" x1="128" y1="7" x2="128" y2="249" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#222a32"/>
+      <stop offset="0.55" stop-color="#192027"/>
+      <stop offset="1" stop-color="#14191e"/>
+    </linearGradient>
+    <radialGradient id="background-light" cx="128" cy="92" r="128" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#34414c" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#101419" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="collar" x1="128" y1="69" x2="128" y2="164" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="0.65" stop-color="#fbfbfb"/>
+      <stop offset="1" stop-color="#f1f2f3"/>
+    </linearGradient>
+    <linearGradient id="signal" x1="128" y1="126" x2="128" y2="194" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#57ccfb"/>
+      <stop offset="1" stop-color="#24ade6"/>
+    </linearGradient>
+    <filter id="collar-shadow" x="-20%" y="-20%" width="140%" height="160%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="1.5" stdDeviation="2.2" flood-color="#000000" flood-opacity="0.48"/>
+    </filter>
+    <filter id="signal-shadow" x="-80%" y="-30%" width="260%" height="170%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="1" stdDeviation="2" flood-color="#0a91c7" flood-opacity="0.48"/>
+    </filter>
+  </defs>
+
+  <rect x="7" y="7" width="242" height="242" rx="49" fill="url(#background)"/>
+  <rect x="7" y="7" width="242" height="242" rx="49" fill="url(#background-light)"/>
+
+  <path
+    d="M81 164
+       C51 157 34 143 34 123
+       L34 106
+       C34 84 75 69 128 69
+       C181 69 222 84 222 106
+       L222 123
+       C222 143 205 157 175 164
+       L175 135
+       C198 129 211 117 211 105
+       C211 90 174 79 128 79
+       C82 79 45 90 45 105
+       C45 117 58 129 81 135
+       Z"
+    fill="url(#collar)"
+    filter="url(#collar-shadow)"
+  />
+
+  <g fill="url(#signal)" filter="url(#signal-shadow)">
+    <rect x="98" y="145" width="11" height="39" rx="5.5"/>
+    <rect x="122.5" y="126" width="11" height="68" rx="5.5"/>
+    <rect x="147" y="145" width="11" height="39" rx="5.5"/>
+  </g>
+</svg>

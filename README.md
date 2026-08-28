@@ -27,7 +27,7 @@ The integration is **telemetry-only by default**. For each collar on your accoun
 
 ## Requirements
 
-- Home Assistant 2024.11 or newer.
+- Home Assistant 2024.12 or newer.
 - A Halo account with an active Pack Membership Plan and at least one paired collar (the same email/password you use in the Halo mobile app).
 
 ## Installation

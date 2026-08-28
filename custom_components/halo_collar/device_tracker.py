@@ -2,7 +2,7 @@ from __future__ import annotations
 
 try:
     from homeassistant.components.device_tracker import TrackerEntity
-except ImportError:  # Home Assistant 2024.11 compatibility
+except ImportError:  # Home Assistant 2024.12 compatibility
     from homeassistant.components.device_tracker.config_entry import TrackerEntity
 from homeassistant.components.device_tracker.const import SourceType
 
