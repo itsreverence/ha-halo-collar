@@ -28,7 +28,7 @@ jobs:
       - run: python -m compileall -q custom_components tests scripts
 
   minimum-ha-compat:
-    name: minimum HA 2024.11 compatibility
+    name: minimum HA 2024.12 compatibility
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
@@ -38,10 +38,10 @@ jobs:
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
           enable-cache: true
-      - name: Exercise tracker against Home Assistant 2024.11.3
+      - name: Exercise tracker and options flow against Home Assistant 2024.12.0
         run: >-
           uv run --isolated --python 3.12.7
-          --with homeassistant==2024.11.3
+          --with homeassistant==2024.12.0
           --with josepy==1.14.0
           --with pytest==8.3.3
           pytest -q -p no:homeassistant-custom-component
