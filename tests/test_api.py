@@ -407,6 +407,42 @@ class SequencedSession(FakeSession):
         ),
         (
             [
+                FakeResponse(200, [{"name": "missing-id"}]),
+                FakeResponse(200, []),
+                FakeResponse(200, {}),
+                FakeResponse(200, "2026-07-06T00:32:03Z"),
+            ],
+            "pet state response contained an item without a valid id",
+        ),
+        (
+            [
+                FakeResponse(200, []),
+                FakeResponse(200, [{"id": 1234}]),
+                FakeResponse(200, {}),
+                FakeResponse(200, "2026-07-06T00:32:03Z"),
+            ],
+            "collar state response contained an item without a valid id",
+        ),
+        (
+            [
+                FakeResponse(200, [{"id": "pet-1"}, {"id": "pet-1"}]),
+                FakeResponse(200, []),
+                FakeResponse(200, {}),
+                FakeResponse(200, "2026-07-06T00:32:03Z"),
+            ],
+            "pet state response contained duplicate ids",
+        ),
+        (
+            [
+                FakeResponse(200, []),
+                FakeResponse(200, [{"id": "collar-1"}, {"id": "collar-1"}]),
+                FakeResponse(200, {}),
+                FakeResponse(200, "2026-07-06T00:32:03Z"),
+            ],
+            "collar state response contained duplicate ids",
+        ),
+        (
+            [
                 FakeResponse(200, []),
                 FakeResponse(200, []),
                 FakeResponse(200, ["not-an-object"]),
@@ -422,6 +458,55 @@ async def test_fetch_state_rejects_malformed_provider_shapes(responses, message)
 
     with pytest.raises(HaloApiError, match=message):
         await client.async_fetch_state()
+
+
+@pytest.mark.asyncio
+async def test_fetch_state_normalizes_malformed_optional_mapping_envelopes():
+    session = SequencedSession(
+        [
+            FakeResponse(200, [{"id": "pet-1", "collarInfo": "malformed"}]),
+            FakeResponse(
+                200,
+                [
+                    {
+                        "id": "collar-1",
+                        "petInfo": {
+                            "id": "pet-1",
+                            "location": "malformed",
+                            "lastLocation": [],
+                            "telemetry": "malformed",
+                        },
+                        "telemetry": "malformed",
+                        "firmware": [],
+                        "diagnostics": "malformed",
+                        "issues": 123,
+                    }
+                ],
+            ),
+            FakeResponse(200, {}),
+            FakeResponse(200, "2026-07-06T00:32:03Z"),
+        ]
+    )
+    client = _new_client(session)
+
+    state = await client.async_fetch_state()
+
+    assert state.pets == [{"id": "pet-1", "collarInfo": {}}]
+    assert state.collars == [
+        {
+            "id": "collar-1",
+            "petInfo": {
+                "id": "pet-1",
+                "location": {},
+                "lastLocation": {},
+                "telemetry": {},
+            },
+            "telemetry": {},
+            "firmware": {},
+            "diagnostics": {},
+            "issues": {},
+        }
+    ]
 
 
 @pytest.fixture(autouse=True)

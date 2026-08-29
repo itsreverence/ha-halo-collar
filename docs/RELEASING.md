@@ -10,7 +10,11 @@ This checklist is for maintainers.
 4. Run:
 
    ```bash
+   uv lock --check
    uv run pytest -q
+   uv run --isolated --python 3.14.2 \
+     --with-requirements requirements_test_ha_stable.txt \
+     pytest -q
    uv run ruff check .
    uv run ruff format --check .
    python -m compileall custom_components tests scripts

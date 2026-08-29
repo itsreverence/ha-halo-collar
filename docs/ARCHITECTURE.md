@@ -49,7 +49,7 @@ The default installation is telemetry-only. Fence controls and Find collar use s
 
 Fence writes retain the transaction lock through read-only reconciliation and require fresh synchronized reported-state confirmation. Fence-off additionally requires no active walk. Find collar is Halo's physical Return Whistle: the collar blinks and plays a sound for 10 seconds, which Halo warns may confuse a pet wearing it. It requires its own opt-in, an enabled `findcollar` subscription feature, fresh uniquely mapped telemetry, no active or unknown walk, and a reload-stable per-collar cooldown started immediately before dispatch. The bodyless endpoint exposes no durable reported sound/light state, so read-only refresh cannot confirm physical execution; provider success is reported as command success, while 404 and ambiguous outcomes remain errors and are never retried.
 
-Do not add corrections, fence geometry writes, other collar wake/control actions, bind/unbind, account mutation, or proprietary BLE walk-start behavior without a separate explicit review. Cloud pause/stop for an already active walk may be investigated later, but must account for the official app's local walk database and post-processing lifecycle.
+Do not add corrections, fence geometry writes, other collar wake/control actions, bind/unbind, account mutation, or proprietary BLE walk-start behavior without a separate explicit review.
 
 ## Error handling
 
@@ -63,9 +63,14 @@ resource-bearing write paths so account data and pet/collar IDs are not echoed
 into Home Assistant logs.
 
 Coordinator failures mark telemetry and controls unavailable until a successful
-refresh. Newly discovered collars trigger one config-entry reload so every
-platform creates the new entity set. Removed collars remain in the entity
-registry but become unavailable; restoring them reuses the same entity IDs.
+refresh. The provider boundary rejects pet/collar lists with missing, non-string,
+or duplicate IDs before platforms construct entities. Optional nested mapping
+envelopes used by entity extractors are copied and normalized to empty mappings
+when malformed, so private-API schema drift yields unknown telemetry instead of
+raw `KeyError` or `AttributeError` failures. Newly discovered collars trigger one
+config-entry reload so every platform creates the new entity set. Removed collars
+remain in the entity registry but become unavailable; restoring them reuses the
+same entity IDs.
 
 ## Privacy boundary
 
