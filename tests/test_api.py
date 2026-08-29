@@ -87,6 +87,42 @@ class FakeSession:
         )
 
 
+class MinimumClientVersionSession(FakeSession):
+    async def get(self, url, headers=None, allow_redirects=True):
+        assert headers is not None
+        client_header = headers["Halo-Client"]
+        version = client_header.split("version=", 1)[1].split("&", 1)[0]
+        parts = tuple(int(part) for part in version.split("."))
+        provided = (*parts, *(0 for _ in range(4 - len(parts))))
+        if provided < (2, 11, 0, 583):
+            self.gets.append((url, headers))
+            return FakeResponse(
+                400,
+                {
+                    "details": {
+                        "minimalSupportedVersion": "2.11.0.583",
+                        "providedVersion": ".".join(str(part) for part in provided),
+                        "errorCode": 3003,
+                        "message": "The provided client's version is not supported",
+                    }
+                },
+            )
+        return await super().get(url, headers=headers, allow_redirects=allow_redirects)
+
+
+@pytest.mark.asyncio
+async def test_fetch_state_uses_supported_halo_android_client_version():
+    session = MinimumClientVersionSession()
+    client = _new_client(session)
+    client._access_token = "access"
+    client._expires_at = time.time() + 3600
+
+    state = await client.async_fetch_state()
+
+    assert state.pets == [{"id": "pet1"}]
+    assert "version=2.13.0" in session.gets[0][1]["Halo-Client"]
+
+
 @pytest.mark.asyncio
 async def test_refreshes_expired_token_and_fetches_state():
     session = FakeSession()

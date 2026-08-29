@@ -17,6 +17,9 @@ if TYPE_CHECKING:
 TOKEN_REFRESH_SKEW_SECONDS = 60
 REQUEST_TIMEOUT_SECONDS = 30
 OPTIONAL_WALK_HISTORY_TIMEOUT_SECONDS = 5
+# Halo rejects API calls from app versions below its server-enforced Android floor.
+# Keep this aligned with a publicly released official Android app version.
+HALO_ANDROID_CLIENT_VERSION = "2.13.0"
 # Transient statuses worth retrying; anything else surfaces immediately.
 RETRYABLE_STATUS = (429, 500, 502, 503, 504)
 # Delays between attempts; total attempts = len(RETRY_BACKOFF_SECONDS) + 1.
@@ -502,7 +505,7 @@ class HaloApiClient:
     def _client_headers(self) -> dict[str, str]:
         return {
             "Halo-Client": (
-                f"clientId={self._client_id}&version=2.11.0"
+                f"clientId={self._client_id}&version={HALO_ANDROID_CLIENT_VERSION}"
                 "&appInstanceId=00000000-0000-0000-0000-000000000000"
                 "&timezone=America%2FNew_York"
             ),
