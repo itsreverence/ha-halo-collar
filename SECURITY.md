@@ -29,6 +29,12 @@ If a password or token is exposed:
 
 ## Safety boundary
 
-Halo Collar is intentionally read-only and must not modify fences, corrections, modes, collar behavior, or account/device binding. Its cloud telemetry and Home Assistant automations are supplemental. Do not rely on this integration for pet containment, emergency response, or safety decisions; use the official Halo app and collar as the source of truth.
+Halo Collar is **telemetry-only by default**. The only supported mutations are the separately opted-in, fail-closed controls documented by this project:
+
+- idempotently enabling fence mode;
+- disabling fence mode only after a second, higher-risk opt-in and fresh active-walk checks;
+- issuing one guarded Find Collar sound-and-light command with entitlement, identity, telemetry, walk-state, and cooldown checks.
+
+Fence creation, editing, and deletion; corrections; bind/unbind; account changes; arbitrary collar behavior; and other private write endpoints remain intentionally unsupported. Treat every Home Assistant control as a supplemental convenience, not a containment authority. Confirm safety-critical state in the official Halo app and physically verify your pet is safe.
 
 The integration depends on an undocumented private cloud API and may stop working when Halo changes that service.

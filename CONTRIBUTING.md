@@ -21,7 +21,16 @@ uv run ruff format --check .
 python -m compileall custom_components tests
 ```
 
-Unit tests exercise the API client, authentication/configuration/reauth/options flows, guarded fence and Find collar transactions, cooldown/dispatch-boundary behavior, and telemetry extractors without requiring a live Halo account. On Python 3.14.2+, the pinned `pytest-homeassistant-custom-component` harness also loads Home Assistant 2026.7.2 and verifies config-entry setup/failure behavior, every platform, option-driven control lifecycle, token persistence, and lock identity across real unload/reload operations. A separate isolated compatibility lane loads Home Assistant 2024.12.0 on Python 3.12.7 and verifies the tracker import, indoor-home behavior, and options-flow startup against the documented minimum API. GitHub Actions runs the locked suite on Python 3.11, 3.13, and 3.14; Hassfest and HACS validation run as separate jobs.
+Run the full current-stable Home Assistant contract separately so its large,
+Home Assistant-pinned dependency graph does not enter the project lockfile:
+
+```bash
+uv run --isolated --python 3.14.2 \
+  --with-requirements requirements_test_ha_stable.txt \
+  pytest -q
+```
+
+Unit tests exercise the API client, authentication/configuration/reauth/options flows, guarded fence and Find collar transactions, cooldown/dispatch-boundary behavior, provider-payload normalization, and telemetry extractors without requiring a live Halo account. On Python 3.14.2+, the pinned `pytest-homeassistant-custom-component` harness loads the current stable Home Assistant contract and verifies config-entry setup/failure behavior, every platform, option-driven control lifecycle, token persistence, and lock identity across real unload/reload operations. A separate isolated compatibility lane loads Home Assistant 2024.12.0 on Python 3.12.7 and verifies the tracker import, indoor-home behavior, and options-flow startup against the documented minimum API. GitHub Actions also exercise the portable unit suite across the supported development matrix; Hassfest, HACS validation, release-artifact integrity, and Ruff run as separate jobs.
 
 ## Testing in Home Assistant
 

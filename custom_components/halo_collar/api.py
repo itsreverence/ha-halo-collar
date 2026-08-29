@@ -60,6 +60,45 @@ def _sanitize_walk_record(raw_walk: dict[str, Any]) -> dict[str, Any]:
     return walk
 
 
+def _mapping_or_empty(value: Any) -> dict[str, Any]:
+    """Copy one provider mapping, treating a malformed optional envelope as unknown."""
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _normalize_pet(raw_pet: dict[str, Any]) -> dict[str, Any]:
+    """Normalize optional pet mapping envelopes used by entity extractors."""
+    pet = dict(raw_pet)
+    for key in ("collarInfo", "metrics", "telemetry"):
+        if key in pet:
+            pet[key] = _mapping_or_empty(pet[key])
+    return pet
+
+
+def _normalize_collar(raw_collar: dict[str, Any]) -> dict[str, Any]:
+    """Normalize optional collar mapping envelopes used by entity extractors."""
+    collar = dict(raw_collar)
+    for key in ("diagnostics", "firmware", "issues", "telemetry"):
+        if key in collar:
+            collar[key] = _mapping_or_empty(collar[key])
+
+    if "petInfo" in collar:
+        pet_info = _mapping_or_empty(collar["petInfo"])
+        for key in ("lastLocation", "location", "telemetry"):
+            if key in pet_info:
+                pet_info[key] = _mapping_or_empty(pet_info[key])
+        collar["petInfo"] = pet_info
+    return collar
+
+
+def _validate_unique_record_ids(records: list[dict[str, Any]], *, label: str) -> None:
+    """Require stable, unique provider IDs before entities are constructed."""
+    ids = [record.get("id") for record in records]
+    if any(not isinstance(record_id, str) or not record_id for record_id in ids):
+        raise HaloApiError(f"Halo {label} state response contained an item without a valid id")
+    if len(set(ids)) != len(ids):
+        raise HaloApiError(f"Halo {label} state response contained duplicate ids")
+
+
 class HaloApiError(Exception):
     """Raised when Halo API calls fail."""
 
@@ -131,6 +170,11 @@ class HaloApiClient:
             raise HaloApiError("Halo collar state response contained a non-object item")
         if not isinstance(subscription, dict):
             raise HaloApiError("Halo subscription state response was not an object")
+
+        _validate_unique_record_ids(pets, label="pet")
+        _validate_unique_record_ids(collars, label="collar")
+        pets = [_normalize_pet(pet) for pet in pets]
+        collars = [_normalize_collar(collar) for collar in collars]
 
         walks: list[dict[str, Any]] = []
         try:
