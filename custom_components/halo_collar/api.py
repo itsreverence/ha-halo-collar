@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import math
+import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -17,6 +19,10 @@ if TYPE_CHECKING:
 TOKEN_REFRESH_SKEW_SECONDS = 60
 REQUEST_TIMEOUT_SECONDS = 30
 OPTIONAL_WALK_HISTORY_TIMEOUT_SECONDS = 5
+# Halo rejects API calls from app versions below its server-enforced Android floor.
+# Keep this aligned with a publicly released official Android app version.
+HALO_ANDROID_CLIENT_VERSION = "2.13.0"
+_CLIENT_VERSION_PATTERN = re.compile(r"\d{1,5}(?:\.\d{1,5}){2,3}")
 # Transient statuses worth retrying; anything else surfaces immediately.
 RETRYABLE_STATUS = (429, 500, 502, 503, 504)
 # Delays between attempts; total attempts = len(RETRY_BACKOFF_SECONDS) + 1.
@@ -99,6 +105,46 @@ def _validate_unique_record_ids(records: list[dict[str, Any]], *, label: str) ->
         raise HaloApiError(f"Halo {label} state response contained duplicate ids")
 
 
+def _client_version_tuple(value: Any) -> tuple[int, int, int, int] | None:
+    """Parse a bounded three- or four-part numeric Halo client version."""
+    if not isinstance(value, str) or _CLIENT_VERSION_PATTERN.fullmatch(value) is None:
+        return None
+    parts = tuple(int(part) for part in value.split("."))
+    return (parts[0], parts[1], parts[2], parts[3] if len(parts) == 4 else 0)
+
+
+def _is_newer_client_version(candidate: str, current: str) -> bool:
+    """Compare two already-bounded client version strings safely."""
+    candidate_parts = _client_version_tuple(candidate)
+    current_parts = _client_version_tuple(current)
+    return (
+        candidate_parts is not None
+        and current_parts is not None
+        and candidate_parts > current_parts
+    )
+
+
+def _newer_minimum_client_version(payload: Any, current: str) -> str | None:
+    """Return a strictly newer provider floor from a validated error response."""
+    if not isinstance(payload, str):
+        return None
+    try:
+        body = json.loads(payload)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(body, dict) or not isinstance(body.get("details"), dict):
+        return None
+    details = body["details"]
+    if type(details.get("errorCode")) is not int or details["errorCode"] != 3003:
+        return None
+    minimum = details.get("minimalSupportedVersion")
+    minimum_parts = _client_version_tuple(minimum)
+    current_parts = _client_version_tuple(current)
+    if minimum_parts is None or current_parts is None or minimum_parts <= current_parts:
+        return None
+    return minimum
+
+
 class HaloApiError(Exception):
     """Raised when Halo API calls fail."""
 
@@ -145,6 +191,7 @@ class HaloApiClient:
         self._client_secret = client_secret
         self._api_base = api_base.rstrip("/")
         self._auth_base = auth_base.rstrip("/")
+        self._client_version = HALO_ANDROID_CLIENT_VERSION
         self._refresh_lock = asyncio.Lock()
 
     @property
@@ -205,11 +252,36 @@ class HaloApiClient:
     async def async_get(self, path: str) -> Any:
         await self._async_refresh_if_needed()
         request_access_token = self._access_token
-        status, payload = await self._async_get_with_retry(path)
+        request_client_version = self._client_version
+        status, payload = await self._async_get_with_retry(
+            path, client_version=request_client_version
+        )
+        client_version_retried = False
+        if status == 400 and (
+            minimum := _newer_minimum_client_version(payload, request_client_version)
+        ):
+            if _is_newer_client_version(minimum, self._client_version):
+                self._client_version = minimum
+            client_version_retried = True
+            _LOGGER.info("Halo raised its minimum client version; retrying one read")
+            status, payload = await self._async_get_with_retry(path)
         if status == 401:
             # Access token rejected despite looking valid; refresh once and retry.
             await self.async_refresh_token(rejected_access_token=request_access_token)
-            status, payload = await self._async_get_with_retry(path)
+            request_client_version = self._client_version
+            status, payload = await self._async_get_with_retry(
+                path, client_version=request_client_version
+            )
+            if (
+                not client_version_retried
+                and status == 400
+                and (minimum := _newer_minimum_client_version(payload, request_client_version))
+            ):
+                if _is_newer_client_version(minimum, self._client_version):
+                    self._client_version = minimum
+                client_version_retried = True
+                _LOGGER.info("Halo raised its minimum client version; retrying one read")
+                status, payload = await self._async_get_with_retry(path)
             if status == 401:
                 raise HaloAuthError(f"GET {path} unauthorized even after a token refresh")
         if not 200 <= status < 300:
@@ -345,8 +417,12 @@ class HaloApiClient:
                 "Halo API write transport failed after dispatch; outcome is unknown"
             ) from None
 
-    async def _async_get_with_retry(self, path: str) -> tuple[int, Any]:
+    async def _async_get_with_retry(
+        self, path: str, *, client_version: str | None = None
+    ) -> tuple[int, Any]:
         """Complete a GET under one bounded attempt budget, with safe retries."""
+        if client_version is None:
+            client_version = self._client_version
         attempts = len(RETRY_BACKOFF_SECONDS) + 1
         last_error: Exception | None = None
         for attempt in range(attempts):
@@ -357,7 +433,7 @@ class HaloApiClient:
                 async with asyncio.timeout(REQUEST_TIMEOUT_SECONDS):
                     response = await self._session.get(
                         f"{self._api_base}{path}",
-                        headers=self._headers(),
+                        headers=self._headers(client_version=client_version),
                         allow_redirects=False,
                     )
                     status = response.status
@@ -486,11 +562,11 @@ class HaloApiClient:
         self._refresh_token = refresh_token
         self._expires_at = time.time() + expires_in_seconds - TOKEN_REFRESH_SKEW_SECONDS
 
-    def _headers(self) -> dict[str, str]:
+    def _headers(self, *, client_version: str | None = None) -> dict[str, str]:
         return {
             "Accept": "application/json",
             "Authorization": f"Bearer {self._access_token}",
-            **self._client_headers(),
+            **self._client_headers(client_version=client_version),
         }
 
     def _token_headers(self) -> dict[str, str]:
@@ -499,10 +575,12 @@ class HaloApiClient:
             **self._client_headers(),
         }
 
-    def _client_headers(self) -> dict[str, str]:
+    def _client_headers(self, *, client_version: str | None = None) -> dict[str, str]:
+        if client_version is None:
+            client_version = self._client_version
         return {
             "Halo-Client": (
-                f"clientId={self._client_id}&version=2.11.0"
+                f"clientId={self._client_id}&version={client_version}"
                 "&appInstanceId=00000000-0000-0000-0000-000000000000"
                 "&timezone=America%2FNew_York"
             ),
