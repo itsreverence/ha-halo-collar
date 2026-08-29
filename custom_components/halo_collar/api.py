@@ -113,6 +113,17 @@ def _client_version_tuple(value: Any) -> tuple[int, int, int, int] | None:
     return (parts[0], parts[1], parts[2], parts[3] if len(parts) == 4 else 0)
 
 
+def _is_newer_client_version(candidate: str, current: str) -> bool:
+    """Compare two already-bounded client version strings safely."""
+    candidate_parts = _client_version_tuple(candidate)
+    current_parts = _client_version_tuple(current)
+    return (
+        candidate_parts is not None
+        and current_parts is not None
+        and candidate_parts > current_parts
+    )
+
+
 def _newer_minimum_client_version(payload: Any, current: str) -> str | None:
     """Return a strictly newer provider floor from a validated error response."""
     if not isinstance(payload, str):
@@ -124,7 +135,7 @@ def _newer_minimum_client_version(payload: Any, current: str) -> str | None:
     if not isinstance(body, dict) or not isinstance(body.get("details"), dict):
         return None
     details = body["details"]
-    if details.get("errorCode") != 3003:
+    if type(details.get("errorCode")) is not int or details["errorCode"] != 3003:
         return None
     minimum = details.get("minimalSupportedVersion")
     minimum_parts = _client_version_tuple(minimum)
@@ -241,25 +252,33 @@ class HaloApiClient:
     async def async_get(self, path: str) -> Any:
         await self._async_refresh_if_needed()
         request_access_token = self._access_token
-        status, payload = await self._async_get_with_retry(path)
+        request_client_version = self._client_version
+        status, payload = await self._async_get_with_retry(
+            path, client_version=request_client_version
+        )
         client_version_retried = False
         if status == 400 and (
-            minimum := _newer_minimum_client_version(payload, self._client_version)
+            minimum := _newer_minimum_client_version(payload, request_client_version)
         ):
-            self._client_version = minimum
+            if _is_newer_client_version(minimum, self._client_version):
+                self._client_version = minimum
             client_version_retried = True
             _LOGGER.info("Halo raised its minimum client version; retrying one read")
             status, payload = await self._async_get_with_retry(path)
         if status == 401:
             # Access token rejected despite looking valid; refresh once and retry.
             await self.async_refresh_token(rejected_access_token=request_access_token)
-            status, payload = await self._async_get_with_retry(path)
+            request_client_version = self._client_version
+            status, payload = await self._async_get_with_retry(
+                path, client_version=request_client_version
+            )
             if (
                 not client_version_retried
                 and status == 400
-                and (minimum := _newer_minimum_client_version(payload, self._client_version))
+                and (minimum := _newer_minimum_client_version(payload, request_client_version))
             ):
-                self._client_version = minimum
+                if _is_newer_client_version(minimum, self._client_version):
+                    self._client_version = minimum
                 client_version_retried = True
                 _LOGGER.info("Halo raised its minimum client version; retrying one read")
                 status, payload = await self._async_get_with_retry(path)
@@ -398,8 +417,12 @@ class HaloApiClient:
                 "Halo API write transport failed after dispatch; outcome is unknown"
             ) from None
 
-    async def _async_get_with_retry(self, path: str) -> tuple[int, Any]:
+    async def _async_get_with_retry(
+        self, path: str, *, client_version: str | None = None
+    ) -> tuple[int, Any]:
         """Complete a GET under one bounded attempt budget, with safe retries."""
+        if client_version is None:
+            client_version = self._client_version
         attempts = len(RETRY_BACKOFF_SECONDS) + 1
         last_error: Exception | None = None
         for attempt in range(attempts):
@@ -410,7 +433,7 @@ class HaloApiClient:
                 async with asyncio.timeout(REQUEST_TIMEOUT_SECONDS):
                     response = await self._session.get(
                         f"{self._api_base}{path}",
-                        headers=self._headers(),
+                        headers=self._headers(client_version=client_version),
                         allow_redirects=False,
                     )
                     status = response.status
@@ -539,11 +562,11 @@ class HaloApiClient:
         self._refresh_token = refresh_token
         self._expires_at = time.time() + expires_in_seconds - TOKEN_REFRESH_SKEW_SECONDS
 
-    def _headers(self) -> dict[str, str]:
+    def _headers(self, *, client_version: str | None = None) -> dict[str, str]:
         return {
             "Accept": "application/json",
             "Authorization": f"Bearer {self._access_token}",
-            **self._client_headers(),
+            **self._client_headers(client_version=client_version),
         }
 
     def _token_headers(self) -> dict[str, str]:
@@ -552,10 +575,12 @@ class HaloApiClient:
             **self._client_headers(),
         }
 
-    def _client_headers(self) -> dict[str, str]:
+    def _client_headers(self, *, client_version: str | None = None) -> dict[str, str]:
+        if client_version is None:
+            client_version = self._client_version
         return {
             "Halo-Client": (
-                f"clientId={self._client_id}&version={self._client_version}"
+                f"clientId={self._client_id}&version={client_version}"
                 "&appInstanceId=00000000-0000-0000-0000-000000000000"
                 "&timezone=America%2FNew_York"
             ),

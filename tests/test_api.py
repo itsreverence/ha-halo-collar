@@ -145,6 +145,77 @@ class FutureMinimumClientVersionSession(FakeSession):
         return await FakeSession.get(self, url, headers=headers, allow_redirects=allow_redirects)
 
 
+class ConcurrentFutureMinimumClientVersionSession(FakeSession):
+    def __init__(self):
+        super().__init__()
+        self.initial_requests = 0
+        self.initial_request_barrier = asyncio.Event()
+        self.versions = []
+
+    async def get(self, url, headers=None, allow_redirects=True):
+        assert headers is not None
+        version = headers["Halo-Client"].split("version=", 1)[1].split("&", 1)[0]
+        self.versions.append((url, version))
+        if version == "2.13.0":
+            self.initial_requests += 1
+            if self.initial_requests == 2:
+                self.initial_request_barrier.set()
+            await self.initial_request_barrier.wait()
+            return JsonTextResponse(
+                400,
+                {
+                    "details": {
+                        "minimalSupportedVersion": "2.14.0.100",
+                        "providedVersion": version,
+                        "errorCode": 3003,
+                    }
+                },
+            )
+        return await FakeSession.get(self, url, headers=headers, allow_redirects=allow_redirects)
+
+
+class UnauthorizedThenVersionFloorSession(FakeSession):
+    def __init__(self):
+        super().__init__()
+        self.pet_attempts = 0
+        self.versions = []
+
+    async def get(self, url, headers=None, allow_redirects=True):
+        assert headers is not None
+        version = headers["Halo-Client"].split("version=", 1)[1].split("&", 1)[0]
+        self.versions.append(version)
+        if url.endswith("/pet/my"):
+            self.pet_attempts += 1
+            if self.pet_attempts == 1:
+                return FakeResponse(401, {"error": "unauthorized"})
+            if self.pet_attempts == 2:
+                return JsonTextResponse(
+                    400,
+                    {
+                        "details": {
+                            "minimalSupportedVersion": "2.14.0.100",
+                            "providedVersion": version,
+                            "errorCode": 3003,
+                        }
+                    },
+                )
+        return await FakeSession.get(self, url, headers=headers, allow_redirects=allow_redirects)
+
+
+class TokenVersionFloorSession(FakeSession):
+    async def post(self, url, data=None, headers=None, allow_redirects=True):
+        self.posts.append((url, data, headers))
+        return JsonTextResponse(
+            400,
+            {
+                "details": {
+                    "minimalSupportedVersion": "2.14.0.100",
+                    "errorCode": 3003,
+                }
+            },
+        )
+
+
 @pytest.mark.asyncio
 async def test_fetch_state_uses_supported_halo_android_client_version():
     session = MinimumClientVersionSession()
@@ -185,6 +256,52 @@ async def test_read_retries_future_minimum_client_version_only_once():
 
 
 @pytest.mark.asyncio
+async def test_concurrent_reads_share_future_minimum_without_spurious_failure():
+    session = ConcurrentFutureMinimumClientVersionSession()
+    client = _new_client(session)
+    client._access_token = "access"
+    client._expires_at = time.time() + 3600
+
+    pets, collars = await asyncio.gather(
+        client.async_get("/pet/my"), client.async_get("/collar/my")
+    )
+
+    assert pets == [{"id": "pet1"}]
+    assert collars == [{"id": "collar1", "telemetry": {}}]
+    assert [version for _url, version in session.versions].count("2.13.0") == 2
+    assert [version for _url, version in session.versions].count("2.14.0.100") == 2
+
+
+@pytest.mark.asyncio
+async def test_401_refresh_then_future_minimum_retries_each_recovery_once():
+    session = UnauthorizedThenVersionFloorSession()
+    client = _new_client(session)
+    client._access_token = "access"
+    client._expires_at = time.time() + 3600
+
+    pets = await client.async_get("/pet/my")
+
+    assert pets == [{"id": "pet1"}]
+    assert session.pet_attempts == 3
+    assert session.versions == ["2.13.0", "2.13.0", "2.14.0.100"]
+    assert len(session.posts) == 1
+
+
+@pytest.mark.asyncio
+async def test_token_endpoint_version_floor_fails_closed_without_negotiation():
+    session = TokenVersionFloorSession()
+    client = _new_client(session)
+
+    with pytest.raises(HaloAuthError, match=r"Token request failed: HTTP 400"):
+        await client.async_refresh_token()
+
+    assert len(session.posts) == 1
+    assert "version=2.13.0" in session.posts[0][2]["Halo-Client"]
+    assert client._client_version == "2.13.0"
+    assert session.gets == []
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("minimum_version", "error_code"),
     [
@@ -193,6 +310,9 @@ async def test_read_retries_future_minimum_client_version_only_once():
         ("2.14.0.beta", 3003),
         ("2.12.9.999", 3003),
         ("2.14.0.100", 3004),
+        ("2.14.0.100", 3003.0),
+        ("2.14.0.100", "3003"),
+        ("2.14.0.100", True),
     ],
 )
 async def test_read_rejects_untrusted_client_version_negotiation(minimum_version, error_code):
