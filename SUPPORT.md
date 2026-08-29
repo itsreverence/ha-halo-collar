@@ -4,7 +4,7 @@
 
 1. Restart Home Assistant after installing or updating the integration.
 2. Confirm Halo Collar appears under **Settings → Devices & services**.
-3. If Halo reports that the provided client version is unsupported, update the integration before retrying setup; Halo periodically raises the minimum accepted official-app version.
+3. If Halo reports that the provided client version is unsupported, update the integration before retrying setup. The integration can adopt a strictly validated newer minimum for one safe read retry, but an update may still be needed if Halo changes authentication or its API contract.
 4. Compare important telemetry with the official Halo app.
 5. If authentication expired, complete the Home Assistant reauthentication flow.
 6. Enable debug logging and download diagnostics from the integration page when needed.

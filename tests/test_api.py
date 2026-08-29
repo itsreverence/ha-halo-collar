@@ -110,6 +110,41 @@ class MinimumClientVersionSession(FakeSession):
         return await super().get(url, headers=headers, allow_redirects=allow_redirects)
 
 
+class JsonTextResponse(FakeResponse):
+    async def text(self):
+        return json.dumps(self._payload)
+
+
+class FutureMinimumClientVersionSession(FakeSession):
+    def __init__(self, minimum_version="2.14.0.100", *, error_code=3003, reject_attempts=1):
+        super().__init__()
+        self.minimum_version = minimum_version
+        self.error_code = error_code
+        self.reject_attempts = reject_attempts
+        self.versions = []
+
+    async def get(self, url, headers=None, allow_redirects=True):
+        assert headers is not None
+        client_header = headers["Halo-Client"]
+        version = client_header.split("version=", 1)[1].split("&", 1)[0]
+        self.versions.append(version)
+        self.get_redirects.append(allow_redirects)
+        self.gets.append((url, headers))
+        if url.endswith("/pet/my") and len(self.versions) <= self.reject_attempts:
+            return JsonTextResponse(
+                400,
+                {
+                    "details": {
+                        "minimalSupportedVersion": self.minimum_version,
+                        "providedVersion": version,
+                        "errorCode": self.error_code,
+                        "message": "The provided client's version is not supported",
+                    }
+                },
+            )
+        return await FakeSession.get(self, url, headers=headers, allow_redirects=allow_redirects)
+
+
 @pytest.mark.asyncio
 async def test_fetch_state_uses_supported_halo_android_client_version():
     session = MinimumClientVersionSession()
@@ -121,6 +156,55 @@ async def test_fetch_state_uses_supported_halo_android_client_version():
 
     assert state.pets == [{"id": "pet1"}]
     assert "version=2.13.0" in session.gets[0][1]["Halo-Client"]
+
+
+@pytest.mark.asyncio
+async def test_read_adopts_valid_future_minimum_client_version_once():
+    session = FutureMinimumClientVersionSession()
+    client = _new_client(session)
+    client._access_token = "access"
+    client._expires_at = time.time() + 3600
+
+    pets = await client.async_get("/pet/my")
+
+    assert pets == [{"id": "pet1"}]
+    assert session.versions[:2] == ["2.13.0", "2.14.0.100"]
+
+
+@pytest.mark.asyncio
+async def test_read_retries_future_minimum_client_version_only_once():
+    session = FutureMinimumClientVersionSession(reject_attempts=2)
+    client = _new_client(session)
+    client._access_token = "access"
+    client._expires_at = time.time() + 3600
+
+    with pytest.raises(HaloApiError, match=r"GET /pet/my failed: HTTP 400"):
+        await client.async_get("/pet/my")
+
+    assert session.versions == ["2.13.0", "2.14.0.100"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("minimum_version", "error_code"),
+    [
+        ("2.14", 3003),
+        ("2.14.0.100.1", 3003),
+        ("2.14.0.beta", 3003),
+        ("2.12.9.999", 3003),
+        ("2.14.0.100", 3004),
+    ],
+)
+async def test_read_rejects_untrusted_client_version_negotiation(minimum_version, error_code):
+    session = FutureMinimumClientVersionSession(minimum_version, error_code=error_code)
+    client = _new_client(session)
+    client._access_token = "access"
+    client._expires_at = time.time() + 3600
+
+    with pytest.raises(HaloApiError, match=r"GET /pet/my failed: HTTP 400"):
+        await client.async_get("/pet/my")
+
+    assert session.versions == ["2.13.0"]
 
 
 @pytest.mark.asyncio
