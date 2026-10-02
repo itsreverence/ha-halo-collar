@@ -135,7 +135,7 @@ def _newer_minimum_client_version(payload: Any, current: str) -> str | None:
     if not isinstance(body, dict) or not isinstance(body.get("details"), dict):
         return None
     details = body["details"]
-    if type(details.get("errorCode")) is not int or details["errorCode"] != 3003:
+    if type(body.get("errorCode")) is not int or body["errorCode"] != 3003:
         return None
     minimum = details.get("minimalSupportedVersion")
     minimum_parts = _client_version_tuple(minimum)

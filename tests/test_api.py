@@ -4,6 +4,7 @@ import asyncio
 import json
 import time
 import traceback
+from pathlib import Path
 
 import aiohttp
 import pytest
@@ -96,15 +97,15 @@ class MinimumClientVersionSession(FakeSession):
         provided = (*parts, *(0 for _ in range(4 - len(parts))))
         if provided < (2, 11, 0, 583):
             self.gets.append((url, headers))
-            return FakeResponse(
+            return JsonTextResponse(
                 400,
                 {
                     "details": {
                         "minimalSupportedVersion": "2.11.0.583",
                         "providedVersion": ".".join(str(part) for part in provided),
-                        "errorCode": 3003,
-                        "message": "The provided client's version is not supported",
-                    }
+                    },
+                    "errorCode": 3003,
+                    "message": "The provided client's version is not supported",
                 },
             )
         return await super().get(url, headers=headers, allow_redirects=allow_redirects)
@@ -113,6 +114,46 @@ class MinimumClientVersionSession(FakeSession):
 class JsonTextResponse(FakeResponse):
     async def text(self):
         return json.dumps(self._payload)
+
+
+class ObservedVersionFloorSession(FakeSession):
+    def __init__(self):
+        super().__init__()
+        # Sanitized protocol fields captured from GET /pet/my on 2026-10-02 UTC.
+        # No credentials were sent; account data and provider prose are omitted.
+        self.rejection = json.loads(
+            (Path(__file__).parent / "fixtures/minimum_client_version_error.json").read_text()
+        )
+        self.versions = []
+
+    async def get(self, url, headers=None, allow_redirects=True):
+        assert headers is not None
+        version = headers["Halo-Client"].split("version=", 1)[1].split("&", 1)[0]
+        self.versions.append(version)
+        if version == "2.13.0":
+            self.gets.append((url, headers))
+            self.get_redirects.append(allow_redirects)
+            return JsonTextResponse(400, self.rejection)
+        assert version == "2.13.0.594"
+        return await super().get(url, headers=headers, allow_redirects=allow_redirects)
+
+
+@pytest.mark.asyncio
+async def test_fetch_state_recovers_from_observed_version_error(monkeypatch):
+    # Keep exercising recovery even if the bundled default later rises above the floor.
+    monkeypatch.setattr(halo_api, "HALO_ANDROID_CLIENT_VERSION", "2.13.0")
+    session = ObservedVersionFloorSession()
+    client = _new_client(session)
+    client._access_token = "access"
+    client._expires_at = time.time() + 3600
+
+    state = await client.async_fetch_state()
+
+    assert state.pets == [{"id": "pet1"}]
+    assert session.versions == ["2.13.0"] + ["2.13.0.594"] * 5
+    assert session.get_redirects == [False] * 6
+    assert session.posts == []
+    assert session.puts == []
 
 
 class FutureMinimumClientVersionSession(FakeSession):
@@ -137,9 +178,9 @@ class FutureMinimumClientVersionSession(FakeSession):
                     "details": {
                         "minimalSupportedVersion": self.minimum_version,
                         "providedVersion": version,
-                        "errorCode": self.error_code,
-                        "message": "The provided client's version is not supported",
-                    }
+                    },
+                    "errorCode": self.error_code,
+                    "message": "The provided client's version is not supported",
                 },
             )
         return await FakeSession.get(self, url, headers=headers, allow_redirects=allow_redirects)
@@ -167,8 +208,8 @@ class ConcurrentFutureMinimumClientVersionSession(FakeSession):
                     "details": {
                         "minimalSupportedVersion": "2.14.0.100",
                         "providedVersion": version,
-                        "errorCode": 3003,
-                    }
+                    },
+                    "errorCode": 3003,
                 },
             )
         return await FakeSession.get(self, url, headers=headers, allow_redirects=allow_redirects)
@@ -195,8 +236,8 @@ class UnauthorizedThenVersionFloorSession(FakeSession):
                         "details": {
                             "minimalSupportedVersion": "2.14.0.100",
                             "providedVersion": version,
-                            "errorCode": 3003,
-                        }
+                        },
+                        "errorCode": 3003,
                     },
                 )
         return await FakeSession.get(self, url, headers=headers, allow_redirects=allow_redirects)
@@ -210,8 +251,8 @@ class TokenVersionFloorSession(FakeSession):
             {
                 "details": {
                     "minimalSupportedVersion": "2.14.0.100",
-                    "errorCode": 3003,
-                }
+                },
+                "errorCode": 3003,
             },
         )
 
@@ -230,8 +271,9 @@ async def test_fetch_state_uses_supported_halo_android_client_version():
 
 
 @pytest.mark.asyncio
-async def test_read_adopts_valid_future_minimum_client_version_once():
-    session = FutureMinimumClientVersionSession()
+@pytest.mark.parametrize("minimum_version", ["2.14.0", "2.14.0.100"])
+async def test_read_adopts_valid_future_minimum_client_version_once(minimum_version):
+    session = FutureMinimumClientVersionSession(minimum_version)
     client = _new_client(session)
     client._access_token = "access"
     client._expires_at = time.time() + 3600
@@ -239,7 +281,7 @@ async def test_read_adopts_valid_future_minimum_client_version_once():
     pets = await client.async_get("/pet/my")
 
     assert pets == [{"id": "pet1"}]
-    assert session.versions[:2] == ["2.13.0", "2.14.0.100"]
+    assert session.versions[:2] == ["2.13.0", minimum_version]
 
 
 @pytest.mark.asyncio
@@ -308,6 +350,8 @@ async def test_token_endpoint_version_floor_fails_closed_without_negotiation():
         ("2.14", 3003),
         ("2.14.0.100.1", 3003),
         ("2.14.0.beta", 3003),
+        ("2.14.0.100000", 3003),
+        ("2.13.0.0", 3003),
         ("2.12.9.999", 3003),
         ("2.14.0.100", 3004),
         ("2.14.0.100", 3003.0),
@@ -325,6 +369,22 @@ async def test_read_rejects_untrusted_client_version_negotiation(minimum_version
         await client.async_get("/pet/my")
 
     assert session.versions == ["2.13.0"]
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        "not json",
+        "[]",
+        '{"errorCode": 3003}',
+        '{"errorCode": 3003, "details": []}',
+        '{"errorCode": 3003, "details": {"minimalSupportedVersion": 214}}',
+        '{"details": {"errorCode": 3003, "minimalSupportedVersion": "2.14.0"}}',
+        '{"errorCode": 3004, "details": {"errorCode": 3003, "minimalSupportedVersion": "2.14.0"}}',
+    ],
+)
+def test_client_version_recovery_rejects_invalid_error_envelopes(payload):
+    assert halo_api._newer_minimum_client_version(payload, "2.13.0") is None
 
 
 @pytest.mark.asyncio
