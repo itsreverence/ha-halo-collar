@@ -48,6 +48,8 @@ Use only original or properly licensed artwork. Do not copy Halo's trademarked l
 5. Confirm representative entities populate and compare important telemetry with the official Halo app.
 6. Confirm release artifacts, screenshots, logs, and diagnostics contain no credentials, pet names, serial numbers, locations, fences, provider IDs, or private account data. Home Assistant's private device/entity registries intentionally retain stable device identity and local display labels; protect those registries and backups as household data.
 
-## HACS default submission
+## HACS default listing
+
+Halo Collar is included in the [HACS default repository list](https://github.com/hacs/default). Verify that it remains discoverable in HACS without adding a custom repository.
 
 The repository must remain public, pass Hassfest and HACS validation, include current release artifacts and local brand assets, and maintain an accurate description, topics, issue tracker, and documentation links.

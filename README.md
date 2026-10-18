@@ -5,7 +5,7 @@
 </p>
 
 [![Latest release](https://img.shields.io/github/v/release/itsreverence/ha-halo-collar)](https://github.com/itsreverence/ha-halo-collar/releases)
-[![HACS: Custom](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
+[![HACS: Default](https://img.shields.io/badge/HACS-Default-41BDF5.svg)](https://github.com/hacs/default)
 [![Validate](https://github.com/itsreverence/ha-halo-collar/actions/workflows/validate.yml/badge.svg)](https://github.com/itsreverence/ha-halo-collar/actions/workflows/validate.yml)
 
 A telemetry-first Home Assistant custom integration for your [Halo Collar](https://www.halocollar.com/) pets and collars: location, battery, connectivity, GPS status, safety/fence status, firmware, and narrowly guarded opt-in controls.
@@ -39,12 +39,11 @@ The integration is **telemetry-only by default**. For each collar on your accoun
 
 ### HACS (recommended)
 
-1. In HACS, open the menu (top-right) → **Custom repositories**.
-2. Add `https://github.com/itsreverence/ha-halo-collar` with category **Integration**.
-3. Search for **Halo Collar** in HACS and install it.
-4. Restart Home Assistant.
+Halo Collar is included in the [HACS default catalog](https://github.com/hacs/default). You do not need to add a custom repository.
 
-> Once this repository is accepted into the HACS default list, the custom-repository step will no longer be needed.
+1. Open HACS and search for **Halo Collar**.
+2. Open its repository page and select **Download**.
+3. Restart Home Assistant, then follow [Configuration](#configuration) below.
 
 ### Manual
 
