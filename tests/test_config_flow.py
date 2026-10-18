@@ -10,10 +10,12 @@ import pytest
 pytest.importorskip("homeassistant")
 
 import voluptuous as vol
+from voluptuous_serialize import convert
 
 from homeassistant import config_entries
 from homeassistant.const import CONF_NAME
 from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.helpers import config_validation as cv
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.halo_collar.api import HaloApiError, HaloAuthError
@@ -98,6 +100,10 @@ async def _start_user_flow(hass):
 
 async def test_user_flow_creates_normalized_passwordless_entry(hass):
     initial = await _start_user_flow(hass)
+    password_field = convert(
+        initial["data_schema"].schema[CONF_PASSWORD], custom_serializer=cv.custom_serializer
+    )
+    assert password_field["selector"]["text"]["type"] == "password"
     client = _client()
 
     with patch(
@@ -146,6 +152,10 @@ async def test_user_flow_classifies_login_failures(hass, error, expected):
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "user"
     assert result["errors"] == {"base": expected}
+    password_field = convert(
+        result["data_schema"].schema[CONF_PASSWORD], custom_serializer=cv.custom_serializer
+    )
+    assert password_field["selector"]["text"]["type"] == "password"
 
 
 async def test_user_flow_aborts_duplicate_normalized_email_before_login(hass):
@@ -176,6 +186,10 @@ async def test_reauth_replaces_tokens_preserves_other_data_and_never_password(ha
     )
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "reauth_confirm"
+    password_field = convert(
+        result["data_schema"].schema[CONF_PASSWORD], custom_serializer=cv.custom_serializer
+    )
+    assert password_field["selector"]["text"]["type"] == "password"
 
     with patch("custom_components.halo_collar.config_flow._client", return_value=client):
         result = await hass.config_entries.flow.async_configure(
@@ -237,6 +251,10 @@ async def test_reauth_classifies_failures_without_changing_entry(hass, error, ex
     assert result["type"] is FlowResultType.FORM
     assert result["errors"] == {"base": expected}
     assert entry.data == original
+    password_field = convert(
+        result["data_schema"].schema[CONF_PASSWORD], custom_serializer=cv.custom_serializer
+    )
+    assert password_field["selector"]["text"]["type"] == "password"
 
 
 async def test_options_flow_disabling_controls_revokes_disable_permission(hass):
