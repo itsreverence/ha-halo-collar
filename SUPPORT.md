@@ -9,6 +9,31 @@
 5. If authentication expired, complete the Home Assistant reauthentication flow.
 6. Enable debug logging and download diagnostics from the integration page when needed.
 
+## Recover authentication
+
+Reauthentication renews credentials for the account already saved in this integration. Email comparison ignores surrounding spaces and capitalization. Use the saved account's email and current Halo password. A different email is rejected before sign-in. To use a different account, add a separate Halo Collar integration.
+
+If Home Assistant reports that the account or OAuth settings changed during sign-in, restart reauthentication from the current integration. If the saved identity is missing or inconsistent, reauthentication stops without changing credentials. It does not repair, migrate, or delete the entry. Check that you selected the intended integration and consult the [support routes](#bugs-and-feature-requests) if you need help.
+
+If you choose to remove and add the integration again, first back up Home Assistant and record the affected entities, automations, dashboards, and integration options. Removal can affect device and entity registry associations. After adding the intended account, check entity references and repair affected automations and dashboards. A new entry starts telemetry-only, so review each control opt-in again. Do not edit stored tokens or identity fields to bypass the account check.
+
+## Control missing, unavailable, or rejected
+
+Start with the integration status, the named telemetry entities, and any error shown for the action. Control availability can change after a fresh cloud read. An available button or switch does not guarantee that its action will pass the dispatch checks.
+
+| What you see | What to check and do |
+| --- | --- |
+| A control is missing | Check **Configure** on the integration. **Enable fail-safe fence controls** adds **Enable fences**. **Allow fences to be disabled** also requires fence controls and adds **Fence mode**. **Enable Find collar sound and light** separately adds **Find collar**. Only opt in to controls you intend to use. |
+| Controls remain in the registry but are unavailable after an option change | Disabling an opt-in reloads the integration. Home Assistant can retain the old entity as unavailable. Review any automation that still references it. |
+| Telemetry and controls are unavailable | Check the integration for setup, authentication, or cloud errors. Complete [same-account reauthentication](#recover-authentication) when prompted. For connection failures, wait for a successful refresh and compare telemetry with the official Halo app. |
+| Connectivity is on but a control is unavailable or rejects stale state | Check **Last telemetry**. Controls use the shorter of **Offline after** and 900 seconds. Increasing the connectivity threshold cannot extend that cap. Wait for fresh collar telemetry. A cloud poll does not force a collar report. |
+| An action reports missing or changed pet/collar mapping | Check the assigned collar in the official Halo app and wait for consistent cloud telemetry. Commands require one exact pet/collar mapping and recheck it immediately before dispatch. |
+| **Fence mode** is unavailable, fence-off is rejected, or a fence change cannot be confirmed | Check **Fences enabled**, **Fence state synchronized**, and **Active walk**. The switch requires known reported fence mode and synchronized state. Fence-off also requires both control opt-ins and no active or unknown walk. Fence changes require fresh reported-state confirmation. An unconfirmed command is not proof that containment changed; check the official app and your pet's safety before deciding what to do next. |
+| **Find collar** is unavailable or rejected | Check freshness, mapping, and **Active walk**. Active or unknown walks block Find collar. Halo must also report the enabled `findcollar` subscription feature. The **Subscription** summary does not expose this entitlement; check the official app or Halo support for account access. |
+| **Find collar** is unavailable after an attempt | Wait for the 60-second cooldown after every attempted dispatch, including a failed or ambiguous result. Option-triggered reloads retain the cooldown. Provider success means command acceptance, not verified sound or light at the collar. Do not automate repeated attempts. |
+
+Use telemetry and the official app to investigate connectivity. Physical commands are not connectivity tests. Do not change options to bypass safety checks. If the cause remains unclear, collect redacted diagnostics and the action's error for a support report. Downloading diagnostics uses cached state and makes no Halo request.
+
 ## Bugs and feature requests
 
 Use the repository's [issue forms](https://github.com/itsreverence/ha-halo-collar/issues/new/choose). Include Home Assistant and integration versions, reproduction steps, and only relevant redacted logs or diagnostics.

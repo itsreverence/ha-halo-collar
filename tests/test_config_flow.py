@@ -3,6 +3,7 @@ from __future__ import annotations
 # Home Assistant is intentionally checked before its optional test dependencies.
 # ruff: noqa: E402, I001
 
+import asyncio
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -14,11 +15,12 @@ from voluptuous_serialize import convert
 
 from homeassistant import config_entries
 from homeassistant.const import CONF_NAME
-from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.data_entry_flow import FlowResultType, UnknownFlow
 from homeassistant.helpers import config_validation as cv
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.halo_collar.api import HaloApiError, HaloAuthError
+from custom_components.halo_collar.config_flow import HaloCollarConfigFlow
 from custom_components.halo_collar.const import (
     CONF_ACCESS_TOKEN,
     CONF_ALLOW_FENCE_DISABLE,
@@ -171,51 +173,6 @@ async def test_user_flow_aborts_duplicate_normalized_email_before_login(hass):
     client_factory.assert_not_called()
 
 
-async def test_reauth_replaces_tokens_preserves_other_data_and_never_password(hass):
-    entry = _entry()
-    entry.add_to_hass(hass)
-    client = _client()
-
-    result = await hass.config_entries.flow.async_init(
-        DOMAIN,
-        context={
-            "source": config_entries.SOURCE_REAUTH,
-            "entry_id": entry.entry_id,
-        },
-        data=entry.data,
-    )
-    assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "reauth_confirm"
-    password_field = convert(
-        result["data_schema"].schema[CONF_PASSWORD], custom_serializer=cv.custom_serializer
-    )
-    assert password_field["selector"]["text"]["type"] == "password"
-
-    with patch("custom_components.halo_collar.config_flow._client", return_value=client):
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"],
-            {
-                CONF_EMAIL: " Replacement@Example.COM ",
-                CONF_PASSWORD: "replacement-password",
-            },
-        )
-
-    assert result["type"] is FlowResultType.ABORT
-    assert result["reason"] == "reauth_successful"
-    assert entry.data[CONF_EMAIL] == "replacement@example.com"
-    assert entry.data[CONF_ACCESS_TOKEN] == "new-access"
-    assert entry.data[CONF_REFRESH_TOKEN] == "new-refresh"
-    assert entry.data[CONF_EXPIRES_AT] == 4_102_444_800.0
-    assert entry.data[CONF_CLIENT_ID] == DEFAULT_CLIENT_ID
-    assert entry.data[CONF_CLIENT_SECRET] == DEFAULT_CLIENT_SECRET
-    assert CONF_PASSWORD not in entry.data
-    client.async_login.assert_awaited_once_with(
-        "replacement@example.com",
-        "replacement-password",
-        scope="openid email offline_access api.dogpark",
-    )
-
-
 @pytest.mark.parametrize(
     ("error", "expected"),
     [
@@ -338,7 +295,7 @@ async def test_reauth_rejects_different_account_without_login_or_entry_changes(h
     assert result["type"] is FlowResultType.FORM
 
     with (
-        patch("custom_components.halo_collar.config_flow._client", return_value=client),
+        patch("custom_components.halo_collar.config_flow._client", return_value=client) as factory,
         patch.object(hass.config_entries, "async_reload", return_value=True) as reload_entry,
     ):
         result = await hass.config_entries.flow.async_configure(
@@ -360,12 +317,24 @@ async def test_reauth_rejects_different_account_without_login_or_entry_changes(h
         "options": original_options,
         "unique_id": original_unique_id,
     }
-    assert result["type"] in (FlowResultType.FORM, FlowResultType.ABORT)
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {CONF_EMAIL: "account_mismatch"}
+    factory.assert_not_called()
+    password_field = convert(
+        result["data_schema"].schema[CONF_PASSWORD], custom_serializer=cv.custom_serializer
+    )
+    assert password_field["selector"]["text"]["type"] == "password"
 
 
-async def test_reauth_normalized_same_account_preserves_identity_and_control_options(hass):
+@pytest.mark.parametrize("unique_id", ["owner@example.com", " Owner@Example.COM ", None])
+async def test_reauth_normalized_same_account_preserves_identity_and_control_options(
+    hass, unique_id
+):
     entry = _entry()
     entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        entry, unique_id=unique_id, data={**entry.data, CONF_EMAIL: " Owner@Example.COM "}
+    )
     original_data = dict(entry.data)
     original_options = dict(entry.options)
     original_unique_id = entry.unique_id
@@ -376,13 +345,21 @@ async def test_reauth_normalized_same_account_preserves_identity_and_control_opt
         data=entry.data,
     )
 
+    password_field = convert(
+        result["data_schema"].schema[CONF_PASSWORD], custom_serializer=cv.custom_serializer
+    )
+    assert password_field["selector"]["text"]["type"] == "password"
+
     with (
-        patch("custom_components.halo_collar.config_flow._client", return_value=client),
+        patch("custom_components.halo_collar.config_flow._client", return_value=client) as factory,
         patch.object(hass.config_entries, "async_reload", return_value=True) as reload_entry,
     ):
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"],
-            {CONF_EMAIL: " Owner@Example.COM ", CONF_PASSWORD: "synthetic-password"},
+            {
+                CONF_EMAIL: " Owner@Example.COM ",
+                CONF_PASSWORD: "synthetic-password",
+            },
         )
         await hass.async_block_till_done()
 
@@ -390,6 +367,7 @@ async def test_reauth_normalized_same_account_preserves_identity_and_control_opt
     assert result["reason"] == "reauth_successful"
     assert entry.data == {
         **original_data,
+        CONF_EMAIL: "owner@example.com",
         CONF_ACCESS_TOKEN: "new-access",
         CONF_REFRESH_TOKEN: "new-refresh",
         CONF_EXPIRES_AT: 4_102_444_800.0,
@@ -402,3 +380,207 @@ async def test_reauth_normalized_same_account_preserves_identity_and_control_opt
         "synthetic-password",
         scope="openid email offline_access api.dogpark",
     )
+    assert CONF_PASSWORD not in entry.data
+    factory.assert_called_once_with(hass, DEFAULT_CLIENT_ID, DEFAULT_CLIENT_SECRET)
+
+
+@pytest.mark.parametrize("email", [None, "", "  ", 123, "other@example.com"])
+async def test_reauth_aborts_unusable_saved_identity_before_login(hass, email):
+    entry = _entry()
+    entry.add_to_hass(hass)
+    data = {**entry.data, CONF_EMAIL: email}
+    if email is None:
+        del data[CONF_EMAIL]
+    hass.config_entries.async_update_entry(entry, data=data)
+    options = dict(entry.options)
+
+    with (
+        patch("custom_components.halo_collar.config_flow._client") as factory,
+        patch.object(hass.config_entries, "async_reload") as reload_entry,
+    ):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": config_entries.SOURCE_REAUTH, "entry_id": entry.entry_id},
+            data=entry.data,
+        )
+        await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reauth_account_unavailable"
+    factory.assert_not_called()
+    reload_entry.assert_not_called()
+    assert entry.data == data
+    assert entry.options == options
+    assert entry.unique_id == "owner@example.com"
+
+
+async def test_reauth_missing_entry_aborts_without_client(hass):
+    flow = HaloCollarConfigFlow()
+    flow.hass = hass
+    flow.context = {"source": config_entries.SOURCE_REAUTH, "entry_id": "removed-entry"}
+    with patch("custom_components.halo_collar.config_flow._client") as factory:
+        result = await flow.async_step_reauth_confirm(
+            {CONF_EMAIL: "owner@example.com", CONF_PASSWORD: "synthetic-password"}
+        )
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reauth_account_unavailable"
+    factory.assert_not_called()
+
+
+@pytest.mark.parametrize("change", ["remove", "email", "unique_id", "both"])
+async def test_reauth_checks_live_identity_before_client_construction(hass, change):
+    entry = _entry()
+    entry.add_to_hass(hass)
+    initial = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": config_entries.SOURCE_REAUTH, "entry_id": entry.entry_id},
+        data=entry.data,
+    )
+    if change == "remove":
+        await hass.config_entries.async_remove(entry.entry_id)
+    else:
+        updates = {}
+        if change in ("email", "both"):
+            updates["data"] = {**entry.data, CONF_EMAIL: "other@example.com"}
+        if change in ("unique_id", "both"):
+            updates["unique_id"] = "other@example.com"
+        hass.config_entries.async_update_entry(entry, **updates)
+    before = (dict(entry.data), dict(entry.options), entry.unique_id)
+
+    with (
+        patch("custom_components.halo_collar.config_flow._client") as factory,
+        patch.object(hass.config_entries, "async_reload") as reload_entry,
+    ):
+        if change == "remove":
+            with pytest.raises(UnknownFlow):
+                await hass.config_entries.flow.async_configure(
+                    initial["flow_id"],
+                    {CONF_EMAIL: "owner@example.com", CONF_PASSWORD: "synthetic-password"},
+                )
+        else:
+            result = await hass.config_entries.flow.async_configure(
+                initial["flow_id"],
+                {CONF_EMAIL: "owner@example.com", CONF_PASSWORD: "synthetic-password"},
+            )
+        await hass.async_block_till_done()
+
+    if change == "both":
+        assert result["type"] is FlowResultType.FORM
+        assert result["errors"] == {CONF_EMAIL: "account_mismatch"}
+    elif change != "remove":
+        assert result["type"] is FlowResultType.ABORT
+        assert result["reason"] == "reauth_account_unavailable"
+    factory.assert_not_called()
+    reload_entry.assert_not_called()
+    assert (dict(entry.data), dict(entry.options), entry.unique_id) == before
+
+
+@pytest.mark.parametrize("change", ["remove", "email", "unique_id", "client_id", "client_secret"])
+async def test_reauth_discards_login_if_identity_or_oauth_changes(hass, change):
+    entry = _entry()
+    entry.add_to_hass(hass)
+    initial = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": config_entries.SOURCE_REAUTH, "entry_id": entry.entry_id},
+        data=entry.data,
+    )
+    entered = asyncio.Event()
+    resume = asyncio.Event()
+    client = _client()
+
+    async def login(*args, **kwargs):
+        entered.set()
+        await resume.wait()
+
+    client.async_login.side_effect = login
+    with (
+        patch("custom_components.halo_collar.config_flow._client", return_value=client),
+        patch.object(hass.config_entries, "async_reload") as reload_entry,
+    ):
+        task = asyncio.create_task(
+            hass.config_entries.flow.async_configure(
+                initial["flow_id"],
+                {CONF_EMAIL: "owner@example.com", CONF_PASSWORD: "synthetic-password"},
+            )
+        )
+        try:
+            async with asyncio.timeout(5):
+                await entered.wait()
+                if change == "remove":
+                    await hass.config_entries.async_remove(entry.entry_id)
+                elif change == "unique_id":
+                    hass.config_entries.async_update_entry(entry, unique_id=None)
+                else:
+                    hass.config_entries.async_update_entry(
+                        entry, data={**entry.data, change: "changed"}
+                    )
+                before = (dict(entry.data), dict(entry.options), entry.unique_id)
+                resume.set()
+                result = await task
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reauth_entry_changed"
+    reload_entry.assert_not_called()
+    assert (dict(entry.data), dict(entry.options), entry.unique_id) == before
+
+
+async def test_reauth_uses_live_effective_oauth_and_preserves_concurrent_updates(hass):
+    entry = _entry()
+    entry.add_to_hass(hass)
+    flow = HaloCollarConfigFlow()
+    flow.hass = hass
+    flow.context = {"source": config_entries.SOURCE_REAUTH, "entry_id": entry.entry_id}
+    assert (await flow.async_step_reauth(entry.data))["type"] is FlowResultType.FORM
+    hass.config_entries.async_update_entry(
+        entry, data={**entry.data, CONF_CLIENT_ID: "custom-client", CONF_CLIENT_SECRET: ""}
+    )
+    client = _client()
+    options = {**entry.options, CONF_ENABLE_FIND_COLLAR: True}
+
+    async def login(*args, **kwargs):
+        hass.config_entries.async_update_entry(
+            entry,
+            data={
+                **entry.data,
+                CONF_CLIENT_SECRET: DEFAULT_CLIENT_SECRET,
+                CONF_REFRESH_TOKEN: "concurrent-rotation",
+                "unrelated_setting": "preserved",
+            },
+            options=options,
+        )
+        await asyncio.sleep(0)
+
+    client.async_login.side_effect = login
+    with (
+        patch("custom_components.halo_collar.config_flow._client", return_value=client) as factory,
+        patch.object(hass.config_entries, "async_reload", return_value=True) as reload_entry,
+    ):
+        result = await flow.async_step_reauth_confirm(
+            {
+                CONF_EMAIL: "owner@example.com",
+                CONF_PASSWORD: "synthetic-password",
+                CONF_CLIENT_ID: "untrusted-override",
+                CONF_CLIENT_SECRET: "untrusted-secret",
+                "unknown_key": "must-not-persist",
+            }
+        )
+        await hass.async_block_till_done()
+
+    assert result["reason"] == "reauth_successful"
+    factory.assert_called_once_with(hass, "custom-client", DEFAULT_CLIENT_SECRET)
+    assert entry.data == {
+        CONF_EMAIL: "owner@example.com",
+        CONF_ACCESS_TOKEN: "new-access",
+        CONF_REFRESH_TOKEN: "new-refresh",
+        CONF_EXPIRES_AT: 4_102_444_800.0,
+        CONF_CLIENT_ID: "custom-client",
+        CONF_CLIENT_SECRET: DEFAULT_CLIENT_SECRET,
+        "unrelated_setting": "preserved",
+    }
+    assert entry.options == options
+    assert entry.unique_id == "owner@example.com"
+    reload_entry.assert_awaited_once_with(entry.entry_id)

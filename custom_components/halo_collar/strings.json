@@ -14,7 +14,7 @@
       },
       "reauth_confirm": {
         "title": "Re-authenticate Halo Collar",
-        "description": "Your Halo session expired or your password changed. Enter your credentials again.",
+        "description": "Your Halo session expired or your password changed. Sign in with the same saved Halo account. To use a different account, add a separate Halo Collar integration.",
         "data": {
           "email": "Email",
           "password": "Password"
@@ -23,11 +23,14 @@
     },
     "error": {
       "invalid_auth": "Invalid email or password.",
-      "cannot_connect": "Could not reach the Halo service. Please try again."
+      "cannot_connect": "Could not reach the Halo service. Please try again.",
+      "account_mismatch": "Use the email saved for this integration. To use a different Halo account, add a separate integration."
     },
     "abort": {
       "already_configured": "This Halo account is already configured.",
-      "reauth_successful": "Re-authentication was successful."
+      "reauth_successful": "Re-authentication was successful.",
+      "reauth_account_unavailable": "The saved account is missing or inconsistent, or this integration was removed. No credentials were changed. See the [account recovery guide](https://github.com/itsreverence/ha-halo-collar/blob/main/SUPPORT.md#recover-authentication) before removing or adding an integration.",
+      "reauth_entry_changed": "The saved account or OAuth settings changed during sign-in, or this integration was removed. No sign-in credentials were saved. Restart reauthentication from the current integration. See the [account recovery guide](https://github.com/itsreverence/ha-halo-collar/blob/main/SUPPORT.md#recover-authentication) if the problem continues."
     }
   },
   "options": {

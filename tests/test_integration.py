@@ -1061,6 +1061,38 @@ async def real_client_entry(hass, aioclient_mock):
     return entry
 
 
+async def test_optional_clock_failure_keeps_telemetry_available_and_diagnostics_network_free(
+    hass, real_client_entry, aioclient_mock
+):
+    entry = real_client_entry
+    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    state = coordinator.data
+    aioclient_mock.clear_requests()
+    for path, payload in (
+        ("/pet/my", state.pets),
+        ("/collar/my", state.collars),
+        ("/subscription/my", state.subscription),
+        ("/walk/my?page=1&pageSize=10", {"results": []}),
+    ):
+        aioclient_mock.get(f"{DEFAULT_API_BASE}{path}", json=payload)
+    aioclient_mock.get(
+        f"{DEFAULT_API_BASE}/system/server-date-time", status=403, text="unavailable"
+    )
+
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+
+    assert coordinator.last_update_success
+    assert coordinator.data.server_time is None
+    battery = _state_for_unique_id(hass, "sensor", "collar-1_battery")
+    assert battery.state not in (STATE_UNAVAILABLE, STATE_UNKNOWN)
+    calls = list(aioclient_mock.mock_calls)
+    diagnostics = await async_get_config_entry_diagnostics(hass, entry)
+    assert diagnostics["server_time"] is None
+    assert aioclient_mock.mock_calls == calls
+    assert entry.state is ConfigEntryState.LOADED
+
+
 def _mock_due_token_rotation(entry, aioclient_mock, monkeypatch):
     now = entry.data[CONF_EXPIRES_AT] + 1
     monkeypatch.setattr(halo_api, "time", SimpleNamespace(time=lambda: now))

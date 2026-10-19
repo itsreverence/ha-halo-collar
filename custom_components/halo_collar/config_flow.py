@@ -55,11 +55,23 @@ def _client(hass, client_id: str, client_secret: str) -> HaloApiClient:
     )
 
 
+def _reauth_context(entry: config_entries.ConfigEntry) -> tuple[str, str | None, str, str] | None:
+    email = entry.data.get(CONF_EMAIL)
+    if not isinstance(email, str) or not email.strip():
+        return None
+    unique_id = entry.unique_id
+    if unique_id is not None and unique_id.strip().lower() != email.strip().lower():
+        return None
+    return (
+        email,
+        unique_id,
+        entry.data.get(CONF_CLIENT_ID) or DEFAULT_CLIENT_ID,
+        entry.data.get(CONF_CLIENT_SECRET) or DEFAULT_CLIENT_SECRET,
+    )
+
+
 class HaloCollarConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
-
-    def __init__(self) -> None:
-        self._reauth_entry: config_entries.ConfigEntry | None = None
 
     @staticmethod
     @callback
@@ -123,37 +135,46 @@ class HaloCollarConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
 
     async def async_step_reauth(self, entry_data: Mapping[str, Any]):
-        self._reauth_entry = self.hass.config_entries.async_get_entry(self.context["entry_id"])
         return await self.async_step_reauth_confirm()
 
     async def async_step_reauth_confirm(self, user_input: dict[str, Any] | None = None):
         errors: dict[str, str] = {}
-        assert self._reauth_entry is not None
-        existing = self._reauth_entry.data
+        entry = self.hass.config_entries.async_get_entry(self.context["entry_id"])
+        if entry is None or (login_context := _reauth_context(entry)) is None:
+            return self.async_abort(reason="reauth_account_unavailable")
+        saved_email, _, client_id, client_secret = login_context
+        email = saved_email.strip().lower()
         if user_input is not None:
-            merged = {
-                CONF_EMAIL: existing.get(CONF_EMAIL, ""),
-                CONF_CLIENT_ID: existing.get(CONF_CLIENT_ID, DEFAULT_CLIENT_ID),
-                CONF_CLIENT_SECRET: existing.get(CONF_CLIENT_SECRET, DEFAULT_CLIENT_SECRET),
-                **user_input,
-            }
-            try:
-                data = await self._async_validate(merged)
-            except HaloAuthError:
-                errors["base"] = "invalid_auth"
-            except HaloApiError:
-                errors["base"] = "cannot_connect"
+            if user_input[CONF_EMAIL].strip().lower() != email:
+                errors[CONF_EMAIL] = "account_mismatch"
             else:
-                return self.async_update_reload_and_abort(
-                    self._reauth_entry,
-                    data={**existing, **data},
-                )
+                try:
+                    data = await self._async_validate(
+                        {
+                            CONF_EMAIL: email,
+                            CONF_PASSWORD: user_input[CONF_PASSWORD],
+                            CONF_CLIENT_ID: client_id,
+                            CONF_CLIENT_SECRET: client_secret,
+                        }
+                    )
+                except HaloAuthError:
+                    errors["base"] = "invalid_auth"
+                except HaloApiError:
+                    errors["base"] = "cannot_connect"
+                else:
+                    current = self.hass.config_entries.async_get_entry(self.context["entry_id"])
+                    if current is None or _reauth_context(current) != login_context:
+                        return self.async_abort(reason="reauth_entry_changed")
+                    return self.async_update_reload_and_abort(
+                        current,
+                        data={**current.data, **data},
+                    )
 
         return self.async_show_form(
             step_id="reauth_confirm",
             data_schema=vol.Schema(
                 {
-                    vol.Required(CONF_EMAIL, default=existing.get(CONF_EMAIL, "")): str,
+                    vol.Required(CONF_EMAIL, default=saved_email): str,
                     vol.Required(CONF_PASSWORD): TextSelector(
                         TextSelectorConfig(type=TextSelectorType.PASSWORD)
                     ),

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import ssl
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 
@@ -86,3 +87,31 @@ async def test_write_transport_accepts_home_assistant_verified_tls_context():
     assert context.check_hostname
     assert context.verify_mode == ssl.CERT_REQUIRED
     HaloWriteTransport(ssl_context=context, default_headers={}, trust_env=False)
+
+
+@pytest.mark.parametrize("unique_id", ["owner@example.com", None])
+async def test_reauth_account_guard_uses_minimum_ha_flow_api(unique_id):
+    entry = SimpleNamespace(
+        entry_id="entry-1",
+        unique_id=unique_id,
+        title="Halo Collar",
+        data={"email": " Owner@Example.COM "},
+    )
+    flow = HaloCollarConfigFlow()
+    flow.hass = SimpleNamespace(
+        config_entries=SimpleNamespace(
+            async_get_entry=lambda entry_id: entry,
+            async_get_known_entry=lambda entry_id: entry,
+        )
+    )
+    flow.context = {"entry_id": entry.entry_id, "source": "reauth"}
+
+    assert (await flow.async_step_reauth(entry.data))["type"] == "form"
+    with patch("custom_components.halo_collar.config_flow._client") as factory:
+        result = await flow.async_step_reauth_confirm(
+            {"email": "other@example.com", "password": "synthetic-password"}
+        )
+    assert result["type"] == "form"
+    assert result["errors"] == {"email": "account_mismatch"}
+    factory.assert_not_called()
+    assert entry.unique_id == unique_id

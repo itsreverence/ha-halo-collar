@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 
 TOKEN_REFRESH_SKEW_SECONDS = 60
 REQUEST_TIMEOUT_SECONDS = 30
+OPTIONAL_SERVER_TIME_TIMEOUT_SECONDS = 5
 OPTIONAL_WALK_HISTORY_TIMEOUT_SECONDS = 5
 # Halo rejects API calls from app versions below its server-enforced Android floor.
 # Keep this aligned with a publicly released official Android app version.
@@ -210,8 +211,8 @@ class HaloApiClient:
         }
 
     async def async_fetch_state(self) -> HaloState:
-        pets, collars, subscription, server_time = await self.async_get_many(
-            "/pet/my", "/collar/my", "/subscription/my", "/system/server-date-time"
+        pets, collars, subscription = await self.async_get_many(
+            "/pet/my", "/collar/my", "/subscription/my"
         )
         if not isinstance(pets, list):
             raise HaloApiError("Halo pet state response was not a list")
@@ -228,6 +229,15 @@ class HaloApiClient:
         _validate_unique_record_ids(collars, label="collar")
         pets = [_normalize_pet(pet) for pet in pets]
         collars = [_normalize_collar(collar) for collar in collars]
+
+        server_time = None
+        try:
+            async with asyncio.timeout(OPTIONAL_SERVER_TIME_TIMEOUT_SECONDS):
+                server_time = await self.async_get("/system/server-date-time")
+        except HaloAuthError:
+            raise
+        except (TimeoutError, HaloApiError):
+            _LOGGER.warning("Halo server time was unavailable; continuing without server time")
 
         walks: list[dict[str, Any]] = []
         try:

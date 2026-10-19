@@ -271,7 +271,12 @@ async def test_write_resources_close_on_response_error_timeout_and_cancellation(
         disconnected.set()
 
     if outcome == "timeout":
-        monkeypatch.setattr(halo_api, "REQUEST_TIMEOUT_SECONDS", 0.05)
+        deadline = asyncio.timeout(None)
+        monkeypatch.setattr(
+            halo_api,
+            "asyncio",
+            SimpleNamespace(**(vars(asyncio) | {"timeout": lambda _: deadline})),
+        )
     response = _success_response("fence") if outcome == "success" else None
     stall = stall_body if outcome in ("timeout", "cancel") else None
     async with (
@@ -289,6 +294,11 @@ async def test_write_resources_close_on_response_error_timeout_and_cancellation(
                         await task
                 elif outcome == "success":
                     assert await task == {}
+                elif outcome == "timeout":
+                    await started.wait()
+                    deadline.reschedule(asyncio.get_running_loop().time() + 0.05)
+                    with pytest.raises(HaloWriteOutcomeUnknown):
+                        await task
                 else:
                     with pytest.raises(HaloWriteOutcomeUnknown):
                         await task

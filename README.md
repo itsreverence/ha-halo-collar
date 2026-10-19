@@ -92,7 +92,8 @@ Changing a control option reloads the integration so the corresponding entities 
 ## Troubleshooting
 
 - Restart Home Assistant after installing or updating through HACS.
-- Complete the reauthentication flow if Home Assistant prompts for it.
+- Complete [same-account reauthentication](SUPPORT.md#recover-authentication) if Home Assistant prompts for it.
+- For a missing control or a rejected action, use the [control troubleshooting table](SUPPORT.md#control-missing-unavailable-or-rejected).
 - Compare important location and status values with the official Halo app.
 - For bugs, enable debug logging and download redacted diagnostics from the integration page.
 
