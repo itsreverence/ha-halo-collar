@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -18,6 +20,7 @@ from pytest_homeassistant_custom_component.common import (
     async_fire_time_changed,
 )
 
+from custom_components.halo_collar import api as halo_api
 from custom_components.halo_collar import async_unload_entry
 from custom_components.halo_collar.api import HaloApiError, HaloAuthError, HaloState
 from custom_components.halo_collar.const import (
@@ -31,6 +34,8 @@ from custom_components.halo_collar.const import (
     CONF_REFRESH_TOKEN,
     CONF_SCAN_INTERVAL,
     CONF_STALE_AFTER,
+    DEFAULT_API_BASE,
+    DEFAULT_AUTH_BASE,
     DOMAIN,
 )
 from custom_components.halo_collar.controls import (
@@ -1022,6 +1027,115 @@ async def test_runtime_expiry_only_token_renewal_is_persisted_without_reload(has
     assert entry.data[CONF_ACCESS_TOKEN] == "access"
     assert entry.data[CONF_REFRESH_TOKEN] == "refresh"
     reload_mock.assert_not_awaited()
+
+
+@pytest.fixture
+async def real_client_entry(hass, aioclient_mock):
+    entry = _entry({CONF_ENABLE_FENCE_CONTROLS: False})
+    entry.add_to_hass(hass)
+    state = _state()
+    for path, payload in (
+        ("/pet/my", state.pets),
+        ("/collar/my", state.collars),
+        ("/subscription/my", state.subscription),
+        ("/system/server-date-time", state.server_time),
+        ("/walk/my?page=1&pageSize=10", {"results": []}),
+    ):
+        aioclient_mock.get(f"{DEFAULT_API_BASE}{path}", json=payload)
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.LOADED
+    assert isinstance(hass.data[DOMAIN][entry.entry_id]["client"], halo_api.HaloApiClient)
+    return entry
+
+
+def _mock_due_token_rotation(entry, aioclient_mock, monkeypatch):
+    now = entry.data[CONF_EXPIRES_AT] + 1
+    monkeypatch.setattr(halo_api, "time", SimpleNamespace(time=lambda: now))
+    monkeypatch.setattr(halo_api, "RETRY_BACKOFF_SECONDS", ())
+    aioclient_mock.clear_requests()
+    aioclient_mock.post(
+        f"{DEFAULT_AUTH_BASE}/connect/token",
+        json={
+            "access_token": "rotated-access",
+            "refresh_token": "rotated-refresh",
+            "expires_in": 3600,
+        },
+    )
+
+
+def _assert_rotated_tokens_persisted(entry, aioclient_mock):
+    posts = [call for call in aioclient_mock.mock_calls if call[0].lower() == "post"]
+    gets = [call for call in aioclient_mock.mock_calls if call[0].lower() == "get"]
+    assert len(posts) == 1
+    assert posts[0][2]["refresh_token"] == "refresh"
+    assert gets
+    assert all(call[3]["Authorization"] == "Bearer rotated-access" for call in gets)
+    assert entry.data[CONF_REFRESH_TOKEN] == "rotated-refresh"
+    assert entry.data[CONF_ACCESS_TOKEN] == "rotated-access"
+    assert entry.data[CONF_EXPIRES_AT] > halo_api.time.time()
+
+
+async def test_real_token_rotation_persists_after_failed_first_setup(
+    hass, aioclient_mock, monkeypatch
+):
+    entry = _entry({CONF_ENABLE_FENCE_CONTROLS: False})
+    entry.add_to_hass(hass)
+    _mock_due_token_rotation(entry, aioclient_mock, monkeypatch)
+    aioclient_mock.get(f"{DEFAULT_API_BASE}/pet/my", status=503, text="Unavailable")
+
+    assert not await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert entry.state is ConfigEntryState.SETUP_RETRY
+    assert entry.entry_id not in hass.data.get(DOMAIN, {})
+    _assert_rotated_tokens_persisted(entry, aioclient_mock)
+
+
+async def test_real_token_rotation_persists_after_failed_poll(
+    hass, real_client_entry, aioclient_mock, monkeypatch
+):
+    entry = real_client_entry
+    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    _mock_due_token_rotation(entry, aioclient_mock, monkeypatch)
+    aioclient_mock.get(f"{DEFAULT_API_BASE}/pet/my", status=503, text="Unavailable")
+
+    with patch.object(hass.config_entries, "async_reload", AsyncMock()) as reload_mock:
+        await coordinator.async_refresh()
+        await hass.async_block_till_done()
+
+    assert not coordinator.last_update_success
+    reload_mock.assert_not_awaited()
+    _assert_rotated_tokens_persisted(entry, aioclient_mock)
+
+
+async def test_real_token_rotation_persists_after_cancelled_poll(
+    hass, real_client_entry, aioclient_mock, monkeypatch
+):
+    entry = real_client_entry
+    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    _mock_due_token_rotation(entry, aioclient_mock, monkeypatch)
+    read_started = asyncio.Event()
+
+    async def wait_for_cancel(method, url, data):
+        read_started.set()
+        await asyncio.Event().wait()
+
+    aioclient_mock.get(f"{DEFAULT_API_BASE}/pet/my", side_effect=wait_for_cancel)
+    task = asyncio.create_task(coordinator.async_refresh())
+    try:
+        async with asyncio.timeout(5):
+            await read_started.wait()
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+    await hass.async_block_till_done()
+
+    _assert_rotated_tokens_persisted(entry, aioclient_mock)
 
 
 @pytest.mark.parametrize(

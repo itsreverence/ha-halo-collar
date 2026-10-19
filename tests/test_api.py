@@ -5,6 +5,8 @@ import json
 import time
 import traceback
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import aiohttp
 import pytest
@@ -36,7 +38,7 @@ class FakeResponse:
 
 
 class FakeSession:
-    def __init__(self, token_status=200):
+    def __init__(self, token_status=200, *, expires_in=3600):
         self.posts = []
         self.post_redirects = []
         self.gets = []
@@ -44,6 +46,7 @@ class FakeSession:
         self.puts = []
         self.put_redirects = []
         self._token_status = token_status
+        self.expires_in = expires_in
 
     async def post(self, url, data=None, headers=None, allow_redirects=True):
         self.post_redirects.append(allow_redirects)
@@ -55,7 +58,7 @@ class FakeSession:
             {
                 "access_token": "new-access",
                 "refresh_token": "new-refresh",
-                "expires_in": 3600,
+                "expires_in": self.expires_in,
             },
         )
 
@@ -416,6 +419,38 @@ async def test_refreshes_expired_token_and_fetches_state():
     assert client.token_snapshot["expires_at"] > time.time()
     assert session.post_redirects == [False]
     assert session.get_redirects == [False] * 5
+
+
+@pytest.mark.asyncio
+async def test_short_lived_token_refreshes_once_per_five_get_poll(monkeypatch):
+    monkeypatch.setattr(halo_api, "time", SimpleNamespace(time=lambda: 1_800_000_000.0))
+    session = FakeSession(expires_in=90)
+    client = _new_client(session)
+
+    state = await client.async_fetch_state()
+
+    assert state.pets == [{"id": "pet1"}]
+    assert len(session.gets) == 5
+    assert len(session.posts) == 1
+    assert all(headers["Authorization"] == "Bearer new-access" for _, headers in session.gets)
+
+
+@pytest.mark.asyncio
+async def test_token_refresh_boundary_applies_one_skew(monkeypatch):
+    issued_at = 1_800_000_000.0
+    clock = SimpleNamespace(now=issued_at)
+    monkeypatch.setattr(halo_api, "time", SimpleNamespace(time=lambda: clock.now))
+    session = FakeSession(expires_in=3600)
+    client = _new_client(session)
+    await client.async_refresh_token()
+
+    clock.now = issued_at + 3600 - 60 - 0.001
+    assert await client.async_get("/pet/my") == [{"id": "pet1"}]
+    assert len(session.posts) == 1
+
+    clock.now = issued_at + 3600 - 60
+    assert await client.async_get("/pet/my") == [{"id": "pet1"}]
+    assert len(session.posts) == 2
 
 
 class ConcurrentRefreshSession(FakeSession):
@@ -899,6 +934,30 @@ async def test_token_endpoint_outage_is_not_an_auth_error():
     with pytest.raises(HaloApiError) as excinfo:
         await client.async_login("user@example.com", "hunter2", scope="openid")
     assert not isinstance(excinfo.value, HaloAuthError)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "body",
+    ['{"error": "rate_limited"}', "<html>Too many requests</html>"],
+    ids=["json", "non-json"],
+)
+async def test_token_rate_limit_is_transient_without_json_decode(body):
+    response = FakeResponse(429, body)
+    response.json = AsyncMock(side_effect=lambda **kwargs: json.loads(body))
+    session = FakeSession()
+    session.post = AsyncMock(return_value=response)
+    client = _new_client(session)
+    before = client.token_snapshot
+
+    with pytest.raises(HaloApiError) as excinfo:
+        await client.async_refresh_token()
+
+    assert not isinstance(excinfo.value, HaloAuthError)
+    response.json.assert_not_awaited()
+    assert response.released is True
+    assert client.token_snapshot == before
+    session.post.assert_awaited_once()
 
 
 class SensitiveTokenRejectionSession(FakeSession):
