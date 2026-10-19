@@ -29,8 +29,8 @@
     "abort": {
       "already_configured": "This Halo account is already configured.",
       "reauth_successful": "Re-authentication was successful.",
-      "reauth_account_unavailable": "The saved account is missing or inconsistent, or this integration was removed. No credentials were changed. See the [account recovery guide](https://github.com/itsreverence/ha-halo-collar/blob/main/SUPPORT.md#recover-authentication) before removing or adding an integration.",
-      "reauth_entry_changed": "The saved account or OAuth settings changed during sign-in, or this integration was removed. No sign-in credentials were saved. Restart reauthentication from the current integration. See the [account recovery guide](https://github.com/itsreverence/ha-halo-collar/blob/main/SUPPORT.md#recover-authentication) if the problem continues."
+      "reauth_account_unavailable": "The saved account is missing or inconsistent, or this integration was removed. No credentials were changed. See the [account recovery guide]({recovery_url}) before removing or adding an integration.",
+      "reauth_entry_changed": "The saved account or OAuth settings changed during sign-in, or this integration was removed. No sign-in credentials were saved. Restart reauthentication from the current integration. See the [account recovery guide]({recovery_url}) if the problem continues."
     }
   },
   "options": {

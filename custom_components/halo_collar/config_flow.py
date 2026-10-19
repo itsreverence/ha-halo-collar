@@ -41,6 +41,10 @@ from .const import (
     MIN_STALE_AFTER_SECONDS,
 )
 
+_ACCOUNT_RECOVERY_URL = (
+    "https://github.com/itsreverence/ha-halo-collar/blob/main/SUPPORT.md#recover-authentication"
+)
+
 
 def _client(hass, client_id: str, client_secret: str) -> HaloApiClient:
     return HaloApiClient(
@@ -141,7 +145,10 @@ class HaloCollarConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
         entry = self.hass.config_entries.async_get_entry(self.context["entry_id"])
         if entry is None or (login_context := _reauth_context(entry)) is None:
-            return self.async_abort(reason="reauth_account_unavailable")
+            return self.async_abort(
+                reason="reauth_account_unavailable",
+                description_placeholders={"recovery_url": _ACCOUNT_RECOVERY_URL},
+            )
         saved_email, _, client_id, client_secret = login_context
         email = saved_email.strip().lower()
         if user_input is not None:
@@ -164,7 +171,10 @@ class HaloCollarConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 else:
                     current = self.hass.config_entries.async_get_entry(self.context["entry_id"])
                     if current is None or _reauth_context(current) != login_context:
-                        return self.async_abort(reason="reauth_entry_changed")
+                        return self.async_abort(
+                            reason="reauth_entry_changed",
+                            description_placeholders={"recovery_url": _ACCOUNT_RECOVERY_URL},
+                        )
                     return self.async_update_reload_and_abort(
                         current,
                         data={**current.data, **data},
