@@ -44,9 +44,13 @@ Refreshed tokens and expiry-only renewals are written back to the config entry s
 
 The client submits each validated rotation to Home Assistant's config-entry storage mechanism before another await. Later polling failures, cancellation, and command vetoes therefore do not discard that update. This schedules storage through Home Assistant; it does not guarantee a disk flush. The historical `expires_at` field stores the refresh deadline, already 60 seconds before provider expiry. The refresh check compares that deadline directly. OAuth 429 responses are temporary failures, classified before reading their bodies, and are not retried.
 
+Each setup client has a private token writer seeded from its starting access token, refresh token, and expiry. Before saving a rotation, the writer synchronously checks that the same entry is still registered and its saved credential triple matches the writer's last saved triple. A mismatch permanently retires that writer. Successful unload and incomplete or cancelled setup also retire it. A failed unload alone retains persistence authority. Already committed rotations survive setup failure and cancellation.
+
+If reauth returns an identical credential triple, a rotation arriving before successful unload may still be saved. Replacement setup then starts from that saved triple. After retirement, the old callback cannot save. After reauth changes the credentials and unload fails, the retained old runtime cannot overwrite the accepted credentials. Home Assistant still owns recovery from that failed unload. These checks make no claim about provider token validity.
+
 The repository must not contain real user access/refresh tokens, account credentials, serial-specific payloads, or real location data.
 
-Reauthentication binds to the saved email after trimming whitespace and lowercasing. A stored unique ID must agree with that email. Legacy entries without a unique ID use the saved email without backfilling the ID. Missing or conflicting saved identity aborts before login; a different submitted account returns an email field error before constructing a client. The flow resolves the live entry at submission and checks the saved identity and effective OAuth settings again after login. It merges only validated credential fields into current entry data, preserving unrelated concurrent data and options. This check protects the flow's update boundary; it does not coordinate token persistence across separate clients.
+Reauthentication binds to the saved email after trimming whitespace and lowercasing. A stored unique ID must agree with that email. Legacy entries without a unique ID use the saved email without backfilling the ID. Missing or conflicting saved identity aborts before login; a different submitted account returns an email field error before constructing a client. The flow resolves the live entry at submission and checks the saved identity and effective OAuth settings again after login. It merges only validated credential fields into current entry data, preserving unrelated concurrent data and options. This check protects the flow's update boundary. Runtime token persistence separately checks the saved credential lineage and client lifetime.
 
 ## Safety boundary
 
@@ -103,5 +107,7 @@ those local registries and backups must be protected as household data and are
 not release/support artifacts.
 
 ## Telemetry semantics
+
+GPS and compass calibration flags report on or off only for actual provider booleans. Missing, null, and other values report unknown.
 
 Activity values are provider daily/current-period readings. Location, current-fence, and active-walk state are cloud-polled supplemental telemetry, not real-time containment proof. The next-telemetry sensor is a timestamp calculated from the last report and provider interval; it is not a local countdown. Recent-walk average speed is calculated locally from the already-sanitized distance and duration and causes no additional Halo request. Hardware issue details are emitted only when diagnostics reporting is explicitly reliable and every allowlisted status is structurally valid; otherwise the entity is unknown.

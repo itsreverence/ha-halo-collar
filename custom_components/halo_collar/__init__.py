@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from datetime import timedelta
+from typing import Any, NamedTuple
 
 from .const import (
     CONF_ACCESS_TOKEN,
@@ -50,75 +52,85 @@ async def async_setup_entry(hass, entry) -> bool:
     session = async_get_clientsession(hass)
     ssl_context = await hass.async_add_executor_job(client_context)
     data = dict(entry.data)
-    client = HaloApiClient(
-        session=session,
-        access_token=data.get(CONF_ACCESS_TOKEN, ""),
-        refresh_token=data[CONF_REFRESH_TOKEN],
-        expires_at=float(data.get(CONF_EXPIRES_AT, 0) or 0),
-        client_id=data.get(CONF_CLIENT_ID, DEFAULT_CLIENT_ID),
-        client_secret=data.get(CONF_CLIENT_SECRET, ""),
-        api_base=DEFAULT_API_BASE,
-        auth_base=DEFAULT_AUTH_BASE,
-        write_transport=HaloWriteTransport(
-            ssl_context=ssl_context,
-            default_headers=session.headers,
-            trust_env=session.trust_env,
-        ),
-        on_token_update=lambda snapshot: _persist_tokens(hass, entry, snapshot),
-    )
+    credentials = _credentials(data)
+    writer = _TokenWriter(hass, entry, credentials)
+    setup_complete = False
+    try:
+        entry.async_on_unload(writer.retire)
+        client = HaloApiClient(
+            session=session,
+            access_token=credentials.access_token,
+            refresh_token=credentials.refresh_token,
+            expires_at=credentials.expires_at,
+            client_id=data.get(CONF_CLIENT_ID, DEFAULT_CLIENT_ID),
+            client_secret=data.get(CONF_CLIENT_SECRET, ""),
+            api_base=DEFAULT_API_BASE,
+            auth_base=DEFAULT_AUTH_BASE,
+            write_transport=HaloWriteTransport(
+                ssl_context=ssl_context,
+                default_headers=session.headers,
+                trust_env=session.trust_env,
+            ),
+            on_token_update=writer.persist,
+        )
 
-    async def _async_update():
-        try:
-            state = await client.async_fetch_state()
-        except HaloAuthError as err:
-            raise ConfigEntryAuthFailed(str(err)) from err
-        except HaloApiError as err:
-            raise UpdateFailed(str(err)) from err
-        return state
+        async def _async_update():
+            try:
+                state = await client.async_fetch_state()
+            except HaloAuthError as err:
+                raise ConfigEntryAuthFailed(str(err)) from err
+            except HaloApiError as err:
+                raise UpdateFailed(str(err)) from err
+            return state
 
-    coordinator = DataUpdateCoordinator(
-        hass,
-        logger=_LOGGER,
-        name=DOMAIN,
-        update_method=_async_update,
-        update_interval=_scan_interval(entry),
-    )
-    await coordinator.async_config_entry_first_refresh()
-    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
-        "client": client,
-        "coordinator": coordinator,
-        "controls_signature": _controls_signature(entry),
-    }
-    # Applied in place rather than via reload: the entry is also updated when
-    # refreshed tokens are persisted, and a reload there would loop.
-    entry.async_on_unload(entry.add_update_listener(_async_entry_updated))
-    await hass.config_entries.async_forward_entry_setups(
-        entry,
-        [Platform(p) for p in PLATFORMS],
-    )
+        coordinator = DataUpdateCoordinator(
+            hass,
+            logger=_LOGGER,
+            name=DOMAIN,
+            update_method=_async_update,
+            update_interval=_scan_interval(entry),
+        )
+        await coordinator.async_config_entry_first_refresh()
+        hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
+            "client": client,
+            "coordinator": coordinator,
+            "controls_signature": _controls_signature(entry),
+        }
+        # Applied in place rather than via reload: the entry is also updated when
+        # refreshed tokens are persisted, and a reload there would loop.
+        entry.async_on_unload(entry.add_update_listener(_async_entry_updated))
+        await hass.config_entries.async_forward_entry_setups(
+            entry,
+            [Platform(p) for p in PLATFORMS],
+        )
 
-    known_collar_ids = {
-        collar.get("id")
-        for collar in coordinator.data.collars
-        if isinstance(collar.get("id"), str) and collar.get("id")
-    }
-    inventory_reload_pending = False
-
-    def _reload_for_new_collars() -> None:
-        nonlocal inventory_reload_pending
-        if inventory_reload_pending:
-            return
-        current_collar_ids = {
+        known_collar_ids = {
             collar.get("id")
             for collar in coordinator.data.collars
             if isinstance(collar.get("id"), str) and collar.get("id")
         }
-        if current_collar_ids - known_collar_ids:
-            inventory_reload_pending = True
-            hass.async_create_task(hass.config_entries.async_reload(entry.entry_id))
+        inventory_reload_pending = False
 
-    entry.async_on_unload(coordinator.async_add_listener(_reload_for_new_collars))
-    return True
+        def _reload_for_new_collars() -> None:
+            nonlocal inventory_reload_pending
+            if inventory_reload_pending:
+                return
+            current_collar_ids = {
+                collar.get("id")
+                for collar in coordinator.data.collars
+                if isinstance(collar.get("id"), str) and collar.get("id")
+            }
+            if current_collar_ids - known_collar_ids:
+                inventory_reload_pending = True
+                hass.async_create_task(hass.config_entries.async_reload(entry.entry_id))
+
+        entry.async_on_unload(coordinator.async_add_listener(_reload_for_new_collars))
+        setup_complete = True
+        return True
+    finally:
+        # Minimum HA does not run unload callbacks for every incomplete setup.
+        if not setup_complete:
+            writer.retire()
 
 
 async def _async_entry_updated(hass, entry) -> None:
@@ -138,23 +150,49 @@ async def _async_entry_updated(hass, entry) -> None:
     coordinator.async_update_listeners()
 
 
-def _persist_tokens(hass, entry, snapshot) -> None:
-    """Write refreshed tokens back to the config entry so they survive restarts."""
-    if (
-        snapshot["access_token"] == entry.data.get(CONF_ACCESS_TOKEN)
-        and snapshot["refresh_token"] == entry.data.get(CONF_REFRESH_TOKEN)
-        and snapshot["expires_at"] == entry.data.get(CONF_EXPIRES_AT)
-    ):
-        return
-    hass.config_entries.async_update_entry(
-        entry,
-        data={
-            **entry.data,
-            CONF_ACCESS_TOKEN: snapshot["access_token"],
-            CONF_REFRESH_TOKEN: snapshot["refresh_token"],
-            CONF_EXPIRES_AT: snapshot["expires_at"],
-        },
+class _Credentials(NamedTuple):
+    access_token: str
+    refresh_token: str
+    expires_at: float
+
+
+def _credentials(data: Mapping[str, Any]) -> _Credentials:
+    return _Credentials(
+        data.get(CONF_ACCESS_TOKEN, ""),
+        data[CONF_REFRESH_TOKEN],
+        float(data.get(CONF_EXPIRES_AT, 0) or 0),
     )
+
+
+class _TokenWriter:
+    def __init__(self, hass, entry, credentials: _Credentials) -> None:
+        self._hass = hass
+        self._entry = entry
+        self._head = credentials
+        self._live = True
+
+    def retire(self) -> None:
+        self._live = False
+
+    def persist(self, snapshot: Mapping[str, Any]) -> None:
+        entry = self._entry
+        if not self._live or self._hass.config_entries.async_get_entry(entry.entry_id) is not entry:
+            return
+        if _credentials(entry.data) != self._head:
+            self.retire()
+            return
+        rotated = _credentials(snapshot)
+        if rotated != self._head:
+            self._hass.config_entries.async_update_entry(
+                entry,
+                data={
+                    **entry.data,
+                    CONF_ACCESS_TOKEN: rotated.access_token,
+                    CONF_REFRESH_TOKEN: rotated.refresh_token,
+                    CONF_EXPIRES_AT: rotated.expires_at,
+                },
+            )
+            self._head = rotated
 
 
 async def async_remove_entry(hass, entry) -> None:

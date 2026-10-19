@@ -16,6 +16,7 @@ from .entity import HaloEntity
 from .helpers import (
     active_walk_paused,
     active_walk_state,
+    authoritative_bool,
     collar_hardware_issue,
     collar_issue_details,
     firmware_update_available,
@@ -56,7 +57,7 @@ BINARY_SENSORS = (
         key="gps_calibration_required",
         translation_key="gps_calibration_required",
         device_class=BinarySensorDeviceClass.PROBLEM,
-        value_fn=lambda c, _pet, _entry: bool(
+        value_fn=lambda c, _pet, _entry: authoritative_bool(
             c.get("telemetry", {}).get("isGpsCalibrationRequired")
         ),
     ),
@@ -64,7 +65,7 @@ BINARY_SENSORS = (
         key="compass_calibration_required",
         translation_key="compass_calibration_required",
         device_class=BinarySensorDeviceClass.PROBLEM,
-        value_fn=lambda c, _pet, _entry: bool(
+        value_fn=lambda c, _pet, _entry: authoritative_bool(
             c.get("telemetry", {}).get("isCompassCalibrationRequired")
         ),
     ),
