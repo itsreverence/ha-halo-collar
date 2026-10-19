@@ -11,9 +11,11 @@ import pytest
 
 pytest.importorskip("homeassistant")
 
-from homeassistant.config_entries import ConfigEntryState
-from homeassistant.const import STATE_ON, STATE_UNAVAILABLE, STATE_UNKNOWN
+from homeassistant.config_entries import SOURCE_REAUTH, ConfigEntryState
+from homeassistant.const import STATE_OFF, STATE_ON, STATE_UNAVAILABLE, STATE_UNKNOWN
+from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers import entity_registry as er
+from homeassistant.setup import async_setup_component
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
@@ -22,15 +24,18 @@ from pytest_homeassistant_custom_component.common import (
 
 from custom_components.halo_collar import api as halo_api
 from custom_components.halo_collar import async_unload_entry
+from custom_components.halo_collar import config_flow as halo_config_flow
 from custom_components.halo_collar.api import HaloApiError, HaloAuthError, HaloState
 from custom_components.halo_collar.const import (
     CONF_ACCESS_TOKEN,
     CONF_ALLOW_FENCE_DISABLE,
     CONF_CLIENT_ID,
     CONF_CLIENT_SECRET,
+    CONF_EMAIL,
     CONF_ENABLE_FENCE_CONTROLS,
     CONF_ENABLE_FIND_COLLAR,
     CONF_EXPIRES_AT,
+    CONF_PASSWORD,
     CONF_REFRESH_TOKEN,
     CONF_SCAN_INTERVAL,
     CONF_STALE_AFTER,
@@ -334,6 +339,41 @@ async def test_runtime_setup_registers_platforms_and_guarded_control_surface(has
     assert subscription.attributes["application_usage_allowed"] is True
     assert subscription.attributes["max_collars"] == 2
     assert subscription.attributes["max_fences"] == 20
+
+
+@pytest.mark.parametrize(
+    ("key", "field"),
+    [
+        ("gps_calibration_required", "isGpsCalibrationRequired"),
+        ("compass_calibration_required", "isCompassCalibrationRequired"),
+    ],
+)
+@pytest.mark.parametrize(
+    ("telemetry", "expected"),
+    [
+        pytest.param({"flag": True}, STATE_ON, id="true"),
+        pytest.param({"flag": False}, STATE_OFF, id="false"),
+        pytest.param({}, STATE_UNKNOWN, id="missing"),
+        pytest.param({"flag": None}, STATE_UNKNOWN, id="null"),
+        pytest.param({"flag": "false"}, STATE_UNKNOWN, id="string-false"),
+        pytest.param({"flag": "true"}, STATE_UNKNOWN, id="string-true"),
+        pytest.param({"flag": 0}, STATE_UNKNOWN, id="zero"),
+        pytest.param({"flag": 1}, STATE_UNKNOWN, id="one"),
+        pytest.param({"flag": []}, STATE_UNKNOWN, id="list"),
+        pytest.param({"flag": {}}, STATE_UNKNOWN, id="object"),
+    ],
+)
+async def test_runtime_calibration_requires_reported_boolean(hass, key, field, telemetry, expected):
+    state = _state()
+    if "flag" in telemetry:
+        state.collars[0]["telemetry"][field] = telemetry["flag"]
+    client = FakeHaloClient(state)
+    entry = _entry({CONF_ENABLE_FENCE_CONTROLS: False})
+    entry.add_to_hass(hass)
+
+    await _setup(hass, entry, client)
+
+    assert _state_for_unique_id(hass, "binary_sensor", f"collar-1_{key}").state == expected
 
 
 async def test_runtime_hardware_issue_is_bounded_and_fail_closed(hass):
@@ -1179,6 +1219,193 @@ async def test_real_token_rotation_persists_after_cancelled_poll(
     await hass.async_block_till_done()
 
     _assert_rotated_tokens_persisted(entry, aioclient_mock)
+
+
+@pytest.mark.parametrize("release_after_reload", [False, True], ids=["flow-return", "reloaded"])
+@pytest.mark.parametrize("refresh_trigger", ["scheduled", "entity-service"])
+async def test_reauth_retains_new_tokens_when_refresh_is_in_flight(
+    hass, real_client_entry, aioclient_mock, monkeypatch, release_after_reload, refresh_trigger
+):
+    assert halo_config_flow.HaloApiClient is halo_api.HaloApiClient
+    entry = real_client_entry
+    hass.config_entries.async_update_entry(
+        entry, data={**entry.data, CONF_EMAIL: "owner@example.com"}
+    )
+    await hass.async_block_till_done()
+    old_client = hass.data[DOMAIN][entry.entry_id]["client"]
+    now = entry.data[CONF_EXPIRES_AT] + 1
+    monkeypatch.setattr(halo_api, "time", SimpleNamespace(time=lambda: now))
+    refresh_started = asyncio.Event()
+    release_refresh = asyncio.Event()
+    refresh_cancelled = asyncio.Event()
+    reload_finished = asyncio.Event()
+    order = []
+    refresh_tasks = []
+    service_task = None
+
+    def observe_reload():
+        if entry.state is ConfigEntryState.LOADED:
+            order.append("real reload completed")
+            reload_finished.set()
+
+    remove_state_listener = entry.async_on_state_change(observe_reload)
+
+    async def token_response(method, url, data):
+        if data["grant_type"] == "password":
+            order.append("new login response")
+            return login_response
+        assert data["grant_type"] == "refresh_token"
+        assert data["refresh_token"] == "refresh"
+        refresh_tasks.append(asyncio.current_task())
+        order.append(f"old {refresh_trigger} refresh waiting")
+        refresh_started.set()
+        try:
+            await release_refresh.wait()
+        except asyncio.CancelledError:
+            order.append("old refresh cancelled")
+            refresh_cancelled.set()
+            raise
+        order.append("old refresh response released")
+        return old_response
+
+    old_response = aioclient_mock.request(
+        "post",
+        f"{DEFAULT_AUTH_BASE}/connect/token",
+        json={
+            "access_token": "old-rotated-access",
+            "refresh_token": "old-rotated-refresh",
+            "expires_in": 3600,
+        },
+        side_effect=token_response,
+    )
+    login_response = aioclient_mock.request(
+        "post",
+        f"{DEFAULT_AUTH_BASE}/connect/token",
+        json={
+            "access_token": "reauth-access",
+            "refresh_token": "reauth-refresh",
+            "expires_in": 7200,
+        },
+    )
+
+    try:
+        if refresh_trigger == "scheduled":
+            async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=301))
+        else:
+            assert await async_setup_component(hass, "homeassistant", {})
+            entity = _state_for_unique_id(hass, "sensor", "collar-1_battery")
+            service_task = asyncio.create_task(
+                hass.services.async_call(
+                    "homeassistant", "update_entity", {"entity_id": entity.entity_id}, blocking=True
+                )
+            )
+        async with asyncio.timeout(10):
+            await refresh_started.wait()
+            result = await hass.config_entries.flow.async_init(
+                DOMAIN,
+                context={"source": SOURCE_REAUTH, "entry_id": entry.entry_id},
+                data=entry.data,
+            )
+            assert result["type"] is FlowResultType.FORM
+            result = await hass.config_entries.flow.async_configure(
+                result["flow_id"],
+                {CONF_EMAIL: "owner@example.com", CONF_PASSWORD: "synthetic-password"},
+            )
+            assert result["type"] is FlowResultType.ABORT
+            assert result["reason"] == "reauth_successful"
+            assert entry.data[CONF_REFRESH_TOKEN] == "reauth-refresh"
+            new_credentials = dict(entry.data)
+            order.append("reauth flow returned with new credentials")
+
+            if release_after_reload:
+                await reload_finished.wait()
+                assert entry.state is ConfigEntryState.LOADED
+                replacement = hass.data[DOMAIN][entry.entry_id]["client"]
+                assert replacement is not old_client
+                assert replacement.token_snapshot["refresh_token"] == "reauth-refresh"
+            release_refresh.set()
+            await asyncio.gather(*refresh_tasks, return_exceptions=True)
+            if service_task is not None:
+                await service_task
+            await hass.async_block_till_done()
+            print(f"Reauth event order: {order}; cancelled={refresh_cancelled.is_set()}")
+
+            assert entry.state is ConfigEntryState.LOADED
+            assert hass.data[DOMAIN][entry.entry_id]["client"] is not old_client
+            assert dict(entry.data) == new_credentials
+    finally:
+        remove_state_listener()
+        release_refresh.set()
+        for task in refresh_tasks:
+            task.cancel()
+        await asyncio.gather(*refresh_tasks, return_exceptions=True)
+        if service_task is not None:
+            service_task.cancel()
+            await asyncio.gather(service_task, return_exceptions=True)
+
+
+async def test_removed_entry_does_not_accept_in_flight_entity_refresh_tokens(
+    hass, real_client_entry, aioclient_mock, monkeypatch, caplog
+):
+    entry = real_client_entry
+    original_data = dict(entry.data)
+    now = entry.data[CONF_EXPIRES_AT] + 1
+    monkeypatch.setattr(halo_api, "time", SimpleNamespace(time=lambda: now))
+    refresh_started = asyncio.Event()
+    release_refresh = asyncio.Event()
+    order = []
+
+    async def token_response(method, url, data):
+        assert data["grant_type"] == "refresh_token"
+        order.append("entity-service refresh waiting")
+        refresh_started.set()
+        try:
+            await release_refresh.wait()
+        except asyncio.CancelledError:
+            order.append("refresh cancelled")
+            raise
+        order.append("old refresh response released")
+        return response
+
+    response = aioclient_mock.request(
+        "post",
+        f"{DEFAULT_AUTH_BASE}/connect/token",
+        json={
+            "access_token": "removed-rotated-access",
+            "refresh_token": "removed-rotated-refresh",
+            "expires_in": 3600,
+        },
+        side_effect=token_response,
+    )
+    assert await async_setup_component(hass, "homeassistant", {})
+    entity = _state_for_unique_id(hass, "sensor", "collar-1_battery")
+    service_task = asyncio.create_task(
+        hass.services.async_call(
+            "homeassistant", "update_entity", {"entity_id": entity.entity_id}, blocking=True
+        )
+    )
+    try:
+        async with asyncio.timeout(10):
+            await refresh_started.wait()
+            result = await hass.config_entries.async_remove(entry.entry_id)
+            assert result["require_restart"] is False
+            assert hass.config_entries.async_get_entry(entry.entry_id) is None
+            order.append("entry removed")
+            release_refresh.set()
+            await service_task
+            await hass.async_block_till_done()
+            print(f"Removal event order: {order}")
+            assert dict(entry.data) == original_data
+            assert hass.config_entries.async_get_entry(entry.entry_id) is None
+            assert not [
+                record
+                for record in caplog.records
+                if record.name == "custom_components.halo_collar" and record.exc_info
+            ]
+    finally:
+        release_refresh.set()
+        service_task.cancel()
+        await asyncio.gather(service_task, return_exceptions=True)
 
 
 async def test_command_token_rotation_persists_before_dispatch_veto(
