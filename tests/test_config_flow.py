@@ -321,3 +321,84 @@ async def test_options_schema_enforces_documented_bounds(hass):
         )[CONF_SCAN_INTERVAL]
         == MIN_SCAN_INTERVAL_SECONDS
     )
+
+
+async def test_reauth_rejects_different_account_without_login_or_entry_changes(hass):
+    entry = _entry()
+    entry.add_to_hass(hass)
+    original_data = dict(entry.data)
+    original_options = dict(entry.options)
+    original_unique_id = entry.unique_id
+    client = _client()
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": config_entries.SOURCE_REAUTH, "entry_id": entry.entry_id},
+        data=entry.data,
+    )
+    assert result["type"] is FlowResultType.FORM
+
+    with (
+        patch("custom_components.halo_collar.config_flow._client", return_value=client),
+        patch.object(hass.config_entries, "async_reload", return_value=True) as reload_entry,
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {CONF_EMAIL: " Other@Example.COM ", CONF_PASSWORD: "synthetic-password"},
+        )
+        await hass.async_block_till_done()
+
+    assert {
+        "login_calls": client.async_login.call_count,
+        "reload_calls": reload_entry.call_count,
+        "data": dict(entry.data),
+        "options": dict(entry.options),
+        "unique_id": entry.unique_id,
+    } == {
+        "login_calls": 0,
+        "reload_calls": 0,
+        "data": original_data,
+        "options": original_options,
+        "unique_id": original_unique_id,
+    }
+    assert result["type"] in (FlowResultType.FORM, FlowResultType.ABORT)
+
+
+async def test_reauth_normalized_same_account_preserves_identity_and_control_options(hass):
+    entry = _entry()
+    entry.add_to_hass(hass)
+    original_data = dict(entry.data)
+    original_options = dict(entry.options)
+    original_unique_id = entry.unique_id
+    client = _client()
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": config_entries.SOURCE_REAUTH, "entry_id": entry.entry_id},
+        data=entry.data,
+    )
+
+    with (
+        patch("custom_components.halo_collar.config_flow._client", return_value=client),
+        patch.object(hass.config_entries, "async_reload", return_value=True) as reload_entry,
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {CONF_EMAIL: " Owner@Example.COM ", CONF_PASSWORD: "synthetic-password"},
+        )
+        await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reauth_successful"
+    assert entry.data == {
+        **original_data,
+        CONF_ACCESS_TOKEN: "new-access",
+        CONF_REFRESH_TOKEN: "new-refresh",
+        CONF_EXPIRES_AT: 4_102_444_800.0,
+    }
+    assert entry.options == original_options
+    assert entry.unique_id == original_unique_id
+    reload_entry.assert_awaited_once_with(entry.entry_id)
+    client.async_login.assert_awaited_once_with(
+        "owner@example.com",
+        "synthetic-password",
+        scope="openid email offline_access api.dogpark",
+    )

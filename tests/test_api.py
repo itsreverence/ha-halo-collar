@@ -1768,3 +1768,71 @@ async def test_walk_history_auth_rejection_preserves_auth_failure_semantics():
 
     with pytest.raises(HaloAuthError):
         await client.async_fetch_state()
+
+
+@pytest.mark.asyncio
+async def test_server_time_transient_failure_preserves_core_state_and_walks(monkeypatch):
+    client = _new_client(FakeSession())
+    original_get = client.async_get
+
+    async def get_with_unavailable_server_time(path):
+        if path == "/system/server-date-time":
+            raise HaloApiError("temporary diagnostic outage")
+        if path == "/walk/my?page=1&pageSize=10":
+            return {"results": [{"endedAt": "2026-07-06T10:30:00Z"}]}
+        return await original_get(path)
+
+    monkeypatch.setattr(
+        client, "async_get", AsyncMock(side_effect=get_with_unavailable_server_time)
+    )
+
+    state = await client.async_fetch_state()
+
+    assert state.pets == [{"id": "pet1"}]
+    assert state.collars == [{"id": "collar1", "telemetry": {}}]
+    assert state.subscription == {"accessLevel": "basic"}
+    assert state.server_time is None
+    assert state.walks == [{"endedAt": "2026-07-06T10:30:00Z"}]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["/pet/my", "/collar/my", "/subscription/my"])
+async def test_required_core_fetch_failure_propagates(monkeypatch, path):
+    client = _new_client(FakeSession())
+    original_get = client.async_get
+    failure = HaloApiError("temporary core outage")
+
+    async def get_with_failed_core(request_path):
+        if request_path == path:
+            raise failure
+        return await original_get(request_path)
+
+    monkeypatch.setattr(client, "async_get", AsyncMock(side_effect=get_with_failed_core))
+
+    with pytest.raises(HaloApiError) as raised:
+        await client.async_fetch_state()
+
+    assert raised.value is failure
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["/system/server-date-time", "/walk/my?page=1&pageSize=10"])
+@pytest.mark.parametrize("error_type", [HaloAuthError, asyncio.CancelledError])
+async def test_optional_fetch_auth_failure_and_cancellation_propagate(
+    monkeypatch, path, error_type
+):
+    client = _new_client(FakeSession())
+    original_get = client.async_get
+    failure = error_type()
+
+    async def get_with_failed_optional(request_path):
+        if request_path == path:
+            raise failure
+        return await original_get(request_path)
+
+    monkeypatch.setattr(client, "async_get", AsyncMock(side_effect=get_with_failed_optional))
+
+    with pytest.raises(error_type) as raised:
+        await client.async_fetch_state()
+
+    assert raised.value is failure
