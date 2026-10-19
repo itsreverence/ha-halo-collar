@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import ssl
 from types import SimpleNamespace
 
 import pytest
@@ -20,6 +21,7 @@ from custom_components.halo_collar.const import (
     DEFAULT_STALE_AFTER_SECONDS,
 )
 from custom_components.halo_collar.device_tracker import HaloPetTracker
+from custom_components.halo_collar.transport import HaloWriteTransport
 
 
 def _tracker(*, indoors: bool) -> HaloPetTracker:
@@ -75,3 +77,12 @@ def test_options_flow_opens_against_minimum_ha_api():
         CONF_ENABLE_FIND_COLLAR: False,
         CONF_ALLOW_FENCE_DISABLE: False,
     }
+
+
+async def test_write_transport_accepts_home_assistant_verified_tls_context():
+    from homeassistant.util.ssl import client_context
+
+    context = await asyncio.to_thread(client_context)
+    assert context.check_hostname
+    assert context.verify_mode == ssl.CERT_REQUIRED
+    HaloWriteTransport(ssl_context=context, default_headers={}, trust_env=False)

@@ -177,7 +177,9 @@ async def _async_finish_committed_phase(
     cancelled = False
     while True:
         try:
-            await asyncio.shield(task)
+            # wait() leaves the retained task running without shield()'s
+            # Python 3.14 logging of errors we retrieve after cancellation.
+            await asyncio.wait({task})
             break
         except asyncio.CancelledError:
             cancelled = True
@@ -190,10 +192,6 @@ async def _async_finish_committed_phase(
                 raise
             if task.done():
                 break
-        except Exception as err:
-            if cancelled:
-                raise asyncio.CancelledError from err
-            raise
 
     if cancelled:
         try:

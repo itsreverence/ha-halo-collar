@@ -16,6 +16,8 @@ import aiohttp
 if TYPE_CHECKING:
     from aiohttp import ClientSession
 
+    from .transport import HaloWriteTransport
+
 TOKEN_REFRESH_SKEW_SECONDS = 60
 REQUEST_TIMEOUT_SECONDS = 30
 OPTIONAL_WALK_HISTORY_TIMEOUT_SECONDS = 5
@@ -182,8 +184,12 @@ class HaloApiClient:
         client_secret: str,
         api_base: str,
         auth_base: str,
+        write_transport: HaloWriteTransport | None = None,
+        on_token_update: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         self._session = session
+        self._write_transport = write_transport
+        self._on_token_update = on_token_update
         self._access_token = access_token
         self._refresh_token = refresh_token
         self._expires_at = expires_at
@@ -328,33 +334,28 @@ class HaloApiClient:
         *,
         pre_dispatch: Callable[[], None] | None = None,
     ) -> None:
+        if self._write_transport is None:
+            raise HaloApiError("Safe write transport is unavailable")
         await self._async_refresh_if_needed()
-        response = None
         try:
             async with asyncio.timeout(REQUEST_TIMEOUT_SECONDS):
-                if pre_dispatch is not None:
-                    pre_dispatch()
-                response = await self._session.put(
+                async with self._write_transport.put(
                     f"{self._api_base}{path}",
                     headers=self._headers(),
-                    allow_redirects=False,
-                )
-                if response.status == 404:
-                    raise HaloCollarNotFound("Halo collar was not found")
-                if not 200 <= response.status < 300:
-                    raise HaloWriteOutcomeUnknown(
-                        f"Halo API write returned HTTP {response.status}; outcome is unknown"
-                    )
+                    pre_dispatch=pre_dispatch,
+                ) as response:
+                    if response.status == 404:
+                        raise HaloCollarNotFound("Halo collar was not found")
+                    if not 200 <= response.status < 300:
+                        raise HaloWriteOutcomeUnknown(
+                            f"Halo API write returned HTTP {response.status}; outcome is unknown"
+                        )
         except (HaloCollarNotFound, HaloWriteOutcomeUnknown):
             raise
         except (TimeoutError, aiohttp.ClientError, ValueError):
             raise HaloWriteOutcomeUnknown(
                 "Halo API write dispatch failed; outcome is unknown"
             ) from None
-        finally:
-            release = getattr(response, "release", None)
-            if callable(release):
-                release()
 
     async def _async_put_json(
         self,
@@ -363,58 +364,40 @@ class HaloApiClient:
         *,
         pre_dispatch: Callable[[], None] | None = None,
     ) -> dict[str, Any]:
+        if self._write_transport is None:
+            raise HaloApiError("Safe write transport is unavailable")
         await self._async_refresh_if_needed()
-        response = None
         try:
             async with asyncio.timeout(REQUEST_TIMEOUT_SECONDS):
-                response = await self._async_put_once(path, payload, pre_dispatch=pre_dispatch)
-                if response.status == 401:
-                    await response.text()
-                    raise HaloWriteOutcomeUnknown(
-                        "Halo API write returned HTTP 401; write was not retried "
-                        "because outcome is unknown"
-                    )
-                if not 200 <= response.status < 300:
-                    await response.text()
-                    raise HaloWriteOutcomeUnknown(
-                        f"Halo API write returned HTTP {response.status}; outcome is unknown"
-                    )
-                result = await response.json(content_type=None)
-                if not isinstance(result, dict):
-                    raise HaloWriteOutcomeUnknown(
-                        "Halo API write returned an invalid success response; outcome is unknown"
-                    )
-                return result
+                async with self._write_transport.put(
+                    f"{self._api_base}{path}",
+                    headers=self._headers(),
+                    payload=payload,
+                    pre_dispatch=pre_dispatch,
+                ) as response:
+                    if response.status == 401:
+                        await response.text()
+                        raise HaloWriteOutcomeUnknown(
+                            "Halo API write returned HTTP 401; write was not retried "
+                            "because outcome is unknown"
+                        )
+                    if not 200 <= response.status < 300:
+                        await response.text()
+                        raise HaloWriteOutcomeUnknown(
+                            f"Halo API write returned HTTP {response.status}; outcome is unknown"
+                        )
+                    result = await response.json(content_type=None)
+                    if not isinstance(result, dict):
+                        raise HaloWriteOutcomeUnknown(
+                            "Halo API write returned an invalid success response; "
+                            "outcome is unknown"
+                        )
+                    return result
         except HaloWriteOutcomeUnknown:
             raise
         except (TimeoutError, aiohttp.ClientError, ValueError):
             raise HaloWriteOutcomeUnknown(
                 "Halo API write dispatch or response processing failed; outcome is unknown"
-            ) from None
-        finally:
-            release = getattr(response, "release", None)
-            if callable(release):
-                release()
-
-    async def _async_put_once(
-        self,
-        path: str,
-        payload: dict[str, Any],
-        *,
-        pre_dispatch: Callable[[], None] | None = None,
-    ) -> Any:
-        try:
-            if pre_dispatch is not None:
-                pre_dispatch()
-            return await self._session.put(
-                f"{self._api_base}{path}",
-                json=payload,
-                headers=self._headers(),
-                allow_redirects=False,
-            )
-        except aiohttp.ClientError:
-            raise HaloWriteOutcomeUnknown(
-                "Halo API write transport failed after dispatch; outcome is unknown"
             ) from None
 
     async def _async_get_with_retry(
@@ -462,9 +445,7 @@ class HaloApiClient:
                     await self._async_refresh_token_unlocked()
 
     def _token_needs_refresh(self) -> bool:
-        return (
-            not self._access_token or time.time() >= self._expires_at - TOKEN_REFRESH_SKEW_SECONDS
-        )
+        return not self._access_token or time.time() >= self._expires_at
 
     async def async_refresh_token(self, *, rejected_access_token: str | None = None) -> None:
         """Refresh once, deduplicating concurrent expiry and 401 recovery paths."""
@@ -510,6 +491,8 @@ class HaloApiClient:
                     headers=self._token_headers(),
                     allow_redirects=False,
                 )
+                if response.status == 429:
+                    raise HaloApiError("Token endpoint error: HTTP 429")
                 await response.text()
                 if 300 <= response.status < 400:
                     raise HaloApiError(f"Token endpoint returned HTTP {response.status}")
@@ -561,6 +544,8 @@ class HaloApiClient:
         self._access_token = access_token
         self._refresh_token = refresh_token
         self._expires_at = time.time() + expires_in_seconds - TOKEN_REFRESH_SKEW_SECONDS
+        if self._on_token_update is not None:
+            self._on_token_update(self.token_snapshot)
 
     def _headers(self, *, client_version: str | None = None) -> dict[str, str]:
         return {

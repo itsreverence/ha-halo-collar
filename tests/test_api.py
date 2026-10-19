@@ -4,9 +4,10 @@ import asyncio
 import json
 import time
 import traceback
+from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import aiohttp
 import pytest
@@ -444,6 +445,7 @@ async def test_token_refresh_boundary_applies_one_skew(monkeypatch):
     client = _new_client(session)
     await client.async_refresh_token()
 
+    assert client.token_snapshot["expires_at"] == issued_at + 3540
     clock.now = issued_at + 3600 - 60 - 0.001
     assert await client.async_get("/pet/my") == [{"id": "pet1"}]
     assert len(session.posts) == 1
@@ -522,9 +524,114 @@ async def test_concurrent_401_recovery_refreshes_rejected_token_once():
     assert client.token_snapshot["refresh_token"] == "new-refresh"
 
 
-def _new_client(session):
+class FakeWriteTransport:
+    def __init__(self, session):
+        self.session = session
+
+    @asynccontextmanager
+    async def put(self, url, *, headers, payload=None, pre_dispatch=None):
+        if pre_dispatch is not None:
+            pre_dispatch()
+        response = await self.session.put(url, headers=headers, json=payload, allow_redirects=False)
+        try:
+            yield response
+        finally:
+            response.release()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["find", "fence"])
+async def test_missing_write_transport_rejects_before_refresh_or_commitment(operation):
+    session = FakeSession()
+    client = _new_client(session, write_transport=None)
+    committed = Mock()
+    with pytest.raises(HaloApiError, match="transport is unavailable"):
+        if operation == "find":
+            await client.async_find_collar("collar-1", pre_dispatch=committed)
+        else:
+            await client.async_set_fences_enabled("pet-1", enabled=True, pre_dispatch=committed)
+    committed.assert_not_called()
+    assert session.posts == []
+    assert session.puts == []
+
+
+@pytest.mark.asyncio
+async def test_token_sink_observes_committed_snapshot_and_cannot_mutate_client(monkeypatch):
+    monkeypatch.setattr(halo_api, "time", SimpleNamespace(time=lambda: 1_800_000_000.0))
+    snapshots = []
+
+    def commit(snapshot):
+        assert client.token_snapshot == snapshot
+        snapshots.append(dict(snapshot))
+        snapshot["refresh_token"] = "sink-local-change"
+
+    session = FakeSession()
+    client = _new_client(session, on_token_update=commit)
+    await client.async_refresh_token()
+
+    assert snapshots == [
+        {
+            "access_token": "new-access",
+            "refresh_token": "new-refresh",
+            "expires_at": 1_800_003_540.0,
+            "client_id": "halo.app.android",
+        }
+    ]
+    assert client.token_snapshot == snapshots[0]
+    assert len(session.posts) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error_type", [RuntimeError, ValueError])
+async def test_token_sink_failure_propagates_without_rollback_or_exchange_replay(error_type):
+    failure = error_type("storage update failed")
+    committed = Mock(side_effect=failure)
+    session = FakeSession()
+    client = _new_client(session, on_token_update=committed)
+
+    with pytest.raises(error_type) as caught:
+        await client.async_refresh_token()
+
+    assert caught.value is failure
+    assert client.token_snapshot["refresh_token"] == "new-refresh"
+    committed.assert_called_once_with(client.token_snapshot)
+    assert len(session.posts) == 1
+
+
+@pytest.mark.asyncio
+async def test_cancelled_token_response_does_not_commit():
+    started = asyncio.Event()
+
+    async def wait_for_cancel():
+        started.set()
+        await asyncio.Event().wait()
+
+    session = TokenPayloadSession({})
+    session.response.text = wait_for_cancel
+    committed = Mock()
+    client = _new_client(session, on_token_update=committed)
+    before = client.token_snapshot
+    task = asyncio.create_task(client.async_refresh_token())
+    try:
+        async with asyncio.timeout(5):
+            await started.wait()
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+    committed.assert_not_called()
+    assert client.token_snapshot == before
+    assert session.response.released
+    assert len(session.posts) == 1
+
+
+def _new_client(session, **kwargs):
     return HaloApiClient(
         session=session,
+        write_transport=kwargs.pop("write_transport", FakeWriteTransport(session)),
         access_token="",
         refresh_token="",
         expires_at=0,
@@ -532,6 +639,7 @@ def _new_client(session):
         client_secret="secret",
         api_base="https://api.example",
         auth_base="https://auth.example",
+        **kwargs,
     )
 
 
@@ -671,7 +779,8 @@ class TokenPayloadSession(FakeSession):
 )
 async def test_malformed_token_success_is_atomic_and_released(payload):
     session = TokenPayloadSession(payload)
-    client = _new_client(session)
+    committed = Mock()
+    client = _new_client(session, on_token_update=committed)
     client._access_token = "old-access"
     client._refresh_token = "old-refresh"
     client._expires_at = 4_102_444_800.0
@@ -683,6 +792,7 @@ async def test_malformed_token_success_is_atomic_and_released(payload):
     assert client.token_snapshot == before
     assert session.response.released is True
     assert session.post_redirects == [False]
+    committed.assert_not_called()
 
 
 class SequencedSession(FakeSession):
@@ -939,22 +1049,31 @@ async def test_token_endpoint_outage_is_not_an_auth_error():
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "body",
-    ['{"error": "rate_limited"}', "<html>Too many requests</html>"],
-    ids=["json", "non-json"],
+    ['{"error": "rate_limited"}', "<html>Too many requests</html>", "", "{", None],
+    ids=["json", "non-json", "empty", "malformed", "stalled"],
 )
-async def test_token_rate_limit_is_transient_without_json_decode(body):
+@pytest.mark.parametrize("grant", ["refresh", "login"])
+async def test_token_rate_limit_is_transient_without_json_decode(body, grant):
     response = FakeResponse(429, body)
     response.json = AsyncMock(side_effect=lambda **kwargs: json.loads(body))
+    response.text = AsyncMock(return_value=body)
+    if body is None:
+        response.text.side_effect = asyncio.Event().wait
     session = FakeSession()
     session.post = AsyncMock(return_value=response)
     client = _new_client(session)
     before = client.token_snapshot
 
     with pytest.raises(HaloApiError) as excinfo:
-        await client.async_refresh_token()
+        async with asyncio.timeout(1):
+            if grant == "refresh":
+                await client.async_refresh_token()
+            else:
+                await client.async_login("user@example.com", "password", scope="openid")
 
     assert not isinstance(excinfo.value, HaloAuthError)
     response.json.assert_not_awaited()
+    response.text.assert_not_awaited()
     assert response.released is True
     assert client.token_snapshot == before
     session.post.assert_awaited_once()

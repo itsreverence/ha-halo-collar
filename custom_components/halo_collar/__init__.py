@@ -42,10 +42,13 @@ async def async_setup_entry(hass, entry) -> bool:
     from homeassistant.exceptions import ConfigEntryAuthFailed
     from homeassistant.helpers.aiohttp_client import async_get_clientsession
     from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+    from homeassistant.util.ssl import client_context
 
     from .api import HaloApiClient, HaloApiError, HaloAuthError
+    from .transport import HaloWriteTransport
 
     session = async_get_clientsession(hass)
+    ssl_context = await hass.async_add_executor_job(client_context)
     data = dict(entry.data)
     client = HaloApiClient(
         session=session,
@@ -56,6 +59,12 @@ async def async_setup_entry(hass, entry) -> bool:
         client_secret=data.get(CONF_CLIENT_SECRET, ""),
         api_base=DEFAULT_API_BASE,
         auth_base=DEFAULT_AUTH_BASE,
+        write_transport=HaloWriteTransport(
+            ssl_context=ssl_context,
+            default_headers=session.headers,
+            trust_env=session.trust_env,
+        ),
+        on_token_update=lambda snapshot: _persist_tokens(hass, entry, snapshot),
     )
 
     async def _async_update():
@@ -65,7 +74,6 @@ async def async_setup_entry(hass, entry) -> bool:
             raise ConfigEntryAuthFailed(str(err)) from err
         except HaloApiError as err:
             raise UpdateFailed(str(err)) from err
-        _persist_tokens(hass, entry, client)
         return state
 
     coordinator = DataUpdateCoordinator(
@@ -130,9 +138,8 @@ async def _async_entry_updated(hass, entry) -> None:
     coordinator.async_update_listeners()
 
 
-def _persist_tokens(hass, entry, client) -> None:
+def _persist_tokens(hass, entry, snapshot) -> None:
     """Write refreshed tokens back to the config entry so they survive restarts."""
-    snapshot = client.token_snapshot
     if (
         snapshot["access_token"] == entry.data.get(CONF_ACCESS_TOKEN)
         and snapshot["refresh_token"] == entry.data.get(CONF_REFRESH_TOKEN)

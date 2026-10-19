@@ -10,11 +10,11 @@
 Home Assistant config entry (email + stored tokens; password is never persisted)
   -> HaloApiClient
      -> OAuth password grant on first login (auth.halocollar.com/connect/token)
-     -> serialize access-token refresh so concurrent reads/writes cannot reuse a rotated refresh token
+     -> serialize access-token refresh within each client
+     -> synchronously submit validated token rotations to the config entry before continuing
      -> GET /pet/my, /collar/my, /subscription/my, /system/server-date-time; optional GET /walk/my?page=1&pageSize=10
-     -> 30s request timeout; retries 429/5xx/timeouts with short backoff
+     -> 30s request timeout; GET retries 429/5xx/timeouts with short backoff
   -> DataUpdateCoordinator polls every 300 seconds (60-3600s via options flow)
-     -> persists refreshed tokens back to the config entry
      -> raises ConfigEntryAuthFailed to trigger reauth when credentials fail
   -> platforms expose telemetry entities plus disabled-by-default controls
      -> fence mode: one PUT /pet/{id}/instant-mode with {modePatch: {fencesOn: bool}}
@@ -41,6 +41,8 @@ The config flow collects the user's Halo email and password and exchanges them f
 
 Refreshed tokens and expiry-only renewals are written back to the config entry so they survive restarts. OAuth and API reads disable redirects. Successful token payloads are validated completely before the access token, refresh token, or expiry is changed, so malformed responses cannot partially rotate credentials. When the API reports an authentication failure, the coordinator raises `ConfigEntryAuthFailed`, which starts Home Assistant's reauth flow.
 
+The client submits each validated rotation to Home Assistant's config-entry storage mechanism before another await. Later polling failures, cancellation, and command vetoes therefore do not discard that update. This schedules storage through Home Assistant; it does not guarantee a disk flush. The historical `expires_at` field stores the refresh deadline, already 60 seconds before provider expiry. The refresh check compares that deadline directly. OAuth 429 responses are temporary failures, classified before reading their bodies, and are not retried.
+
 The repository must not contain real user access/refresh tokens, account credentials, serial-specific payloads, or real location data.
 
 ## Safety boundary
@@ -48,6 +50,8 @@ The repository must not contain real user access/refresh tokens, account credent
 The default installation is telemetry-only. Fence controls and Find collar use separate explicit option tiers. Entity service actions share one domain-level config-entry transaction lock that survives option-triggered reloads and force non-debounced cloud refreshes before validating current options, subscription entitlement where required, snapshot-wide one-to-one relationship mapping, and telemetry rather than trusting UI availability or cached state. A command is issued at most once with automatic redirects disabled; after any token refresh and at every immediate transport-dispatch boundary, the client revalidates options, telemetry freshness, command-specific safety state, and the exact pet/collar IDs captured by preflight. Cancellation before that synchronous dispatch boundary cancels the inner task and sends nothing; cancellation after it waits for reconciliation before propagating. Concurrent token refreshes are serialized and double-checked so a rotated refresh token is used only once. The client never replays an ambiguous HTTP/network outcome, including 401.
 
 Fence writes retain the transaction lock through read-only reconciliation and require fresh synchronized reported-state confirmation. Fence-off additionally requires no active walk. Find collar is Halo's physical Return Whistle: the collar blinks and plays a sound for 10 seconds, which Halo warns may confuse a pet wearing it. It requires its own opt-in, an enabled `findcollar` subscription feature, fresh uniquely mapped telemetry, no active or unknown walk, and a reload-stable per-collar cooldown started immediately before dispatch. The bodyless endpoint exposes no durable reported sound/light state, so read-only refresh cannot confirm physical execution; provider success is reported as command success, while 404 and ambiguous outcomes remain errors and are never retried.
+
+Each PUT owns a fresh session and connector that refuses a second connection lease. This blocks aiohttp's disconnected-PUT replay path on the dependency versions covered by the socket tests. Write sessions preserve Home Assistant's verified TLS context, default headers, and `trust_env` policy, but use the system threaded resolver instead of Home Assistant's shared DNS cache and connection pool. Resource preparation precedes the dispatch callback; all write resources close with the request. The shared telemetry session is unchanged.
 
 Do not add corrections, fence geometry writes, other collar wake/control actions, bind/unbind, account mutation, or proprietary BLE walk-start behavior without a separate explicit review.
 

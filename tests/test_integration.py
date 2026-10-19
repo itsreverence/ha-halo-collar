@@ -39,6 +39,7 @@ from custom_components.halo_collar.const import (
     DOMAIN,
 )
 from custom_components.halo_collar.controls import (
+    HaloControlError,
     control_lock_for,
     find_collar_cooldowns_for,
 )
@@ -51,6 +52,7 @@ class FakeHaloClient:
         self.fetches = 0
         self.writes = []
         self.finds = []
+        self.on_token_update = None
         self._snapshot = {
             "access_token": "access",
             "refresh_token": "refresh",
@@ -60,6 +62,10 @@ class FakeHaloClient:
     @property
     def token_snapshot(self):
         return dict(self._snapshot)
+
+    def commit_tokens(self, snapshot):
+        self._snapshot = snapshot
+        self.on_token_update(self.token_snapshot)
 
     async def async_fetch_state(self):
         self.fetches += 1
@@ -240,9 +246,13 @@ def _entry(options):
 
 
 async def _setup(hass, entry, client):
+    def build_client(**kwargs):
+        client.on_token_update = kwargs["on_token_update"]
+        return client
+
     with patch(
         "custom_components.halo_collar.api.HaloApiClient",
-        return_value=client,
+        side_effect=build_client,
     ):
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
@@ -1012,14 +1022,15 @@ async def test_runtime_expiry_only_token_renewal_is_persisted_without_reload(has
     await _setup(hass, entry, client)
     coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
     renewed_expiry = entry.data[CONF_EXPIRES_AT] + 600
-    client._snapshot = {
-        "access_token": entry.data[CONF_ACCESS_TOKEN],
-        "refresh_token": entry.data[CONF_REFRESH_TOKEN],
-        "expires_at": renewed_expiry,
-    }
-
     reload_mock = AsyncMock()
     with patch.object(hass.config_entries, "async_reload", reload_mock):
+        client.commit_tokens(
+            {
+                "access_token": entry.data[CONF_ACCESS_TOKEN],
+                "refresh_token": entry.data[CONF_REFRESH_TOKEN],
+                "expires_at": renewed_expiry,
+            }
+        )
         await coordinator.async_refresh()
         await hass.async_block_till_done()
 
@@ -1138,6 +1149,36 @@ async def test_real_token_rotation_persists_after_cancelled_poll(
     _assert_rotated_tokens_persisted(entry, aioclient_mock)
 
 
+async def test_command_token_rotation_persists_before_dispatch_veto(
+    hass, real_client_entry, aioclient_mock, monkeypatch
+):
+    entry = real_client_entry
+    hass.config_entries.async_update_entry(
+        entry, data={**entry.data, "unrelated_setting": "preserved"}
+    )
+    await hass.async_block_till_done()
+    client = hass.data[DOMAIN][entry.entry_id]["client"]
+    _mock_due_token_rotation(entry, aioclient_mock, monkeypatch)
+    vetoes = []
+
+    def veto():
+        vetoes.append(True)
+        assert entry.data[CONF_REFRESH_TOKEN] == client.token_snapshot["refresh_token"]
+        assert entry.data[CONF_REFRESH_TOKEN] == "rotated-refresh"
+        raise HaloControlError("option revoked during refresh")
+
+    with patch.object(hass.config_entries, "async_reload", AsyncMock()) as reload_mock:
+        with pytest.raises(HaloControlError, match="option revoked"):
+            await client.async_find_collar("synthetic-collar", pre_dispatch=veto)
+        await hass.async_block_till_done()
+
+    assert vetoes == [True]
+    assert entry.data[CONF_ACCESS_TOKEN] == "rotated-access"
+    assert entry.data["unrelated_setting"] == "preserved"
+    assert [call[0].lower() for call in aioclient_mock.mock_calls] == ["post"]
+    reload_mock.assert_not_awaited()
+
+
 @pytest.mark.parametrize(
     ("error", "expected_state"),
     [
@@ -1170,13 +1211,15 @@ async def test_runtime_token_persistence_and_interval_updates_do_not_reload(hass
     await _setup(hass, entry, client)
     coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
 
-    client._snapshot = {
-        "access_token": "rotated-access",
-        "refresh_token": "rotated-refresh",
-        "expires_at": 4_102_444_900.0,
-    }
     reload_mock = AsyncMock()
     with patch.object(hass.config_entries, "async_reload", reload_mock):
+        client.commit_tokens(
+            {
+                "access_token": "rotated-access",
+                "refresh_token": "rotated-refresh",
+                "expires_at": 4_102_444_900.0,
+            }
+        )
         await coordinator.async_refresh()
         await hass.async_block_till_done()
         hass.config_entries.async_update_entry(

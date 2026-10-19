@@ -30,6 +30,16 @@ uv run --isolated --python 3.14.2 \
   pytest -q
 ```
 
+Run the minimum Home Assistant compatibility and write-transport tests separately:
+
+```bash
+uv run --isolated --python 3.12.7 \
+  --with homeassistant==2024.12.0 --with josepy==1.14.0 \
+  --with pytest==8.3.3 --with pytest-asyncio==0.24.0 \
+  pytest -q -p no:homeassistant-custom-component \
+  tests/test_tracker_compat.py tests/test_api_transport.py
+```
+
 Unit tests exercise the API client, authentication/configuration/reauth/options flows, guarded fence and Find collar transactions, cooldown/dispatch-boundary behavior, provider-payload normalization, and telemetry extractors without requiring a live Halo account. On Python 3.14.2+, the pinned `pytest-homeassistant-custom-component` harness loads the current stable Home Assistant contract and verifies config-entry setup/failure behavior, every platform, option-driven control lifecycle, token persistence, and lock identity across real unload/reload operations. A separate isolated compatibility lane loads Home Assistant 2024.12.0 on Python 3.12.7 and verifies the tracker import, indoor-home behavior, and options-flow startup against the documented minimum API. GitHub Actions also exercise the portable unit suite across the supported development matrix; Hassfest, HACS validation, release-artifact integrity, and Ruff run as separate jobs.
 
 ## Testing in Home Assistant

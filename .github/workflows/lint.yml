@@ -55,14 +55,16 @@ jobs:
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           enable-cache: true
-      - name: Exercise tracker and options flow against Home Assistant 2024.12.0
+      - name: Exercise tracker, options flow, and writes against Home Assistant 2024.12.0
         run: >-
           uv run --isolated --python 3.12.7
           --with homeassistant==2024.12.0
           --with josepy==1.14.0
           --with pytest==8.3.3
+          --with pytest-asyncio==0.24.0
           pytest -q -p no:homeassistant-custom-component
           tests/test_tracker_compat.py
+          tests/test_api_transport.py
 
   release-artifacts:
     name: release artifact integrity
