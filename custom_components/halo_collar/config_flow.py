@@ -10,6 +10,7 @@ from homeassistant.core import callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.selector import TextSelector, TextSelectorConfig, TextSelectorType
 
+from . import async_request_reload
 from .api import HaloApiClient, HaloApiError, HaloAuthError
 from .const import (
     CONF_ACCESS_TOKEN,
@@ -175,10 +176,12 @@ class HaloCollarConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                             reason="reauth_entry_changed",
                             description_placeholders={"recovery_url": _ACCOUNT_RECOVERY_URL},
                         )
-                    return self.async_update_reload_and_abort(
+                    self.hass.config_entries.async_update_entry(
                         current,
                         data={**current.data, **data},
                     )
+                    async_request_reload(self.hass, current)
+                    return self.async_abort(reason="reauth_successful")
 
         return self.async_show_form(
             step_id="reauth_confirm",

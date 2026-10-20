@@ -1102,8 +1102,9 @@ async def real_client_entry(hass, aioclient_mock):
 
 
 @pytest.mark.parametrize("same_credentials", [False, True], ids=["different", "identical"])
+@pytest.mark.parametrize("unload_first", [False, True], ids=["loaded", "no-runtime"])
 async def test_successful_reauth_reloads_once_without_listener_warning(
-    hass, real_client_entry, aioclient_mock, monkeypatch, caplog, same_credentials
+    hass, real_client_entry, aioclient_mock, monkeypatch, caplog, same_credentials, unload_first
 ):
     entry = real_client_entry
     hass.config_entries.async_update_entry(
@@ -1112,6 +1113,9 @@ async def test_successful_reauth_reloads_once_without_listener_warning(
     await hass.async_block_till_done()
     original = dict(entry.data)
     old_client = hass.data[DOMAIN][entry.entry_id]["client"]
+    if unload_first:
+        assert await hass.config_entries.async_unload(entry.entry_id)
+        assert entry.entry_id not in hass.data[DOMAIN]
     now = original[CONF_EXPIRES_AT] - 600
     monkeypatch.setattr(halo_api, "time", SimpleNamespace(time=lambda: now))
     expected = {
@@ -1128,11 +1132,26 @@ async def test_successful_reauth_reloads_once_without_listener_warning(
         },
     )
     states = []
+    successful_abort = False
+    real_abort = halo_config_flow.HaloCollarConfigFlow.async_abort
+    real_reload = hass.config_entries.async_reload
+
+    def observe_abort(flow, **kwargs):
+        nonlocal successful_abort
+        result = real_abort(flow, **kwargs)
+        successful_abort = result["reason"] == "reauth_successful"
+        return result
+
+    async def observe_reload(entry_id):
+        assert successful_abort
+        return await real_reload(entry_id)
+
+    monkeypatch.setattr(halo_config_flow.HaloCollarConfigFlow, "async_abort", observe_abort)
     remove_listener = entry.async_on_state_change(lambda: states.append(entry.state))
     caplog.clear()
     try:
         with patch.object(
-            hass.config_entries, "async_reload", wraps=hass.config_entries.async_reload
+            hass.config_entries, "async_reload", side_effect=observe_reload
         ) as reload_spy:
             flow = await hass.config_entries.flow.async_init(
                 DOMAIN,
@@ -1162,6 +1181,230 @@ async def test_successful_reauth_reloads_once_without_listener_warning(
         ]
     finally:
         remove_listener()
+
+
+async def test_queued_inventory_controls_and_reauth_share_one_reload(hass, monkeypatch):
+    client = FakeHaloClient(_state())
+    entry = _entry({CONF_ENABLE_FENCE_CONTROLS: False})
+    entry.add_to_hass(hass)
+    await _setup(hass, entry, client)
+    hass.config_entries.async_update_entry(
+        entry, data={**entry.data, CONF_EMAIL: "owner@example.com"}
+    )
+    await hass.async_block_till_done()
+    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    client.state = _state_with_second_collar()
+    login = SimpleNamespace(
+        async_login=AsyncMock(),
+        token_snapshot={
+            "access_token": "new-access",
+            "refresh_token": "new-refresh",
+            "expires_at": 4_102_444_900.0,
+        },
+    )
+    monkeypatch.setattr(halo_config_flow, "_client", lambda *args: login)
+    flow = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_REAUTH, "entry_id": entry.entry_id}, data=entry.data
+    )
+    snapshots = []
+
+    def build_client(**kwargs):
+        snapshots.append({key: kwargs[key] for key in login.token_snapshot})
+        return client
+
+    with (
+        patch("custom_components.halo_collar.api.HaloApiClient", side_effect=build_client),
+        patch.object(
+            hass.config_entries, "async_reload", wraps=hass.config_entries.async_reload
+        ) as reload_spy,
+    ):
+        hass.config_entries.async_update_entry(
+            entry, options={**entry.options, CONF_ENABLE_FIND_COLLAR: True}
+        )
+        coordinator.async_set_updated_data(client.state)
+        result = await hass.config_entries.flow.async_configure(
+            flow["flow_id"],
+            {CONF_EMAIL: "owner@example.com", CONF_PASSWORD: "synthetic-password"},
+        )
+        assert result["reason"] == "reauth_successful"
+        await hass.async_block_till_done()
+    reload_spy.assert_awaited_once_with(entry.entry_id)
+    assert snapshots == [login.token_snapshot]
+    assert entry.state is ConfigEntryState.LOADED
+    for collar in ("collar-1", "collar-2"):
+        assert (
+            _state_for_unique_id(hass, "button", f"{collar}_find_collar").state != STATE_UNAVAILABLE
+        )
+
+
+@pytest.mark.parametrize(
+    ("loaded_first", "phase", "reauth"),
+    [
+        (False, "before-snapshot", True),
+        (True, "before-snapshot", True),
+        (False, "after-snapshot", True),
+        (True, "after-snapshot", True),
+        (False, "forwarding", True),
+        (True, "forwarding", True),
+        (False, "after-snapshot", False),
+        (False, "forwarding", False),
+    ],
+)
+async def test_reload_during_setup_uses_latest_credentials_and_controls(
+    hass, monkeypatch, loaded_first, phase, reauth
+):
+    from homeassistant.util.ssl import client_context
+
+    from custom_components.halo_collar import async_request_reload
+
+    entry = _entry({CONF_ENABLE_FENCE_CONTROLS: False})
+    entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        entry, data={**entry.data, CONF_EMAIL: "owner@example.com"}
+    )
+    if loaded_first:
+        await _setup(hass, entry, FakeHaloClient(_state()))
+    reached = asyncio.Event()
+    release = asyncio.Event()
+    snapshots = []
+    login = SimpleNamespace(
+        async_login=AsyncMock(),
+        token_snapshot={
+            "access_token": "new-access",
+            "refresh_token": "new-refresh",
+            "expires_at": 4_102_444_900.0,
+        },
+    )
+    expected = (
+        login.token_snapshot if reauth else {key: entry.data[key] for key in login.token_snapshot}
+    )
+    monkeypatch.setattr(halo_config_flow, "_client", lambda *args: login)
+    real_executor = hass.async_add_executor_job
+    real_forward = hass.config_entries.async_forward_entry_setups
+
+    async def hold():
+        if not reached.is_set():
+            reached.set()
+            await release.wait()
+
+    async def executor(target, *args):
+        if phase == "before-snapshot" and target is client_context:
+            await hold()
+        return await real_executor(target, *args)
+
+    async def forward(*args):
+        await real_forward(*args)
+        if phase == "forwarding":
+            await hold()
+
+    def build_client(**kwargs):
+        snapshot = {key: kwargs[key] for key in login.token_snapshot}
+        snapshots.append(snapshot)
+        client = FakeHaloClient(_state())
+        client._snapshot = snapshot
+        client.on_token_update = kwargs["on_token_update"]
+        fetch = client.async_fetch_state
+
+        async def first_refresh():
+            if phase == "after-snapshot":
+                await hold()
+            return await fetch()
+
+        client.async_fetch_state = first_refresh
+        return client
+
+    with (
+        patch("custom_components.halo_collar.api.HaloApiClient", side_effect=build_client),
+        patch.object(hass, "async_add_executor_job", executor),
+        patch.object(hass.config_entries, "async_forward_entry_setups", forward),
+        patch.object(
+            hass.config_entries, "async_reload", wraps=hass.config_entries.async_reload
+        ) as reload_spy,
+    ):
+        async_request_reload(hass, entry)
+        try:
+            async with asyncio.timeout(10):
+                await reached.wait()
+                if reauth:
+                    flow = await hass.config_entries.flow.async_init(
+                        DOMAIN,
+                        context={"source": SOURCE_REAUTH, "entry_id": entry.entry_id},
+                        data=entry.data,
+                    )
+                hass.config_entries.async_update_entry(
+                    entry, options={**entry.options, CONF_ENABLE_FIND_COLLAR: True}
+                )
+                if reauth:
+                    result = await hass.config_entries.flow.async_configure(
+                        flow["flow_id"],
+                        {CONF_EMAIL: "owner@example.com", CONF_PASSWORD: "synthetic-password"},
+                    )
+                    assert result["reason"] == "reauth_successful"
+                release.set()
+                await hass.async_block_till_done()
+        finally:
+            release.set()
+    expected_setups = 2 if phase == "forwarding" or (phase == "after-snapshot" and reauth) else 1
+    assert len(snapshots) == expected_setups
+    assert reload_spy.await_count == expected_setups
+    assert snapshots[-1] == expected
+    assert hass.data[DOMAIN][entry.entry_id]["client"].token_snapshot == expected
+    assert entry.state is ConfigEntryState.LOADED
+    assert _state_for_unique_id(hass, "button", "collar-1_find_collar").state != STATE_UNAVAILABLE
+
+
+async def test_inventory_failed_unload_retains_authority_without_poll_retries(hass):
+    from homeassistant.config_entries import OperationNotAllowed
+
+    from custom_components.halo_collar import async_request_reload
+
+    client = FakeHaloClient(_state())
+    entry = _entry({CONF_ENABLE_FIND_COLLAR: True})
+    entry.add_to_hass(hass)
+    await _setup(hass, entry, client)
+    stored = hass.data[DOMAIN][entry.entry_id]
+    coordinator = stored["coordinator"]
+    lock = control_lock_for(hass.data[DOMAIN], entry.entry_id)
+    cooldowns = find_collar_cooldowns_for(hass.data[DOMAIN], entry.entry_id)
+    cooldowns["collar-1"] = 123.0
+    client.state = _state_with_second_collar()
+    try:
+        with (
+            patch.object(hass.config_entries, "async_unload_platforms", return_value=False),
+            patch.object(
+                hass.config_entries, "async_reload", wraps=hass.config_entries.async_reload
+            ) as reload_spy,
+        ):
+            await coordinator.async_refresh()
+            await hass.async_block_till_done()
+            assert entry.state is ConfigEntryState.FAILED_UNLOAD
+            assert hass.data[DOMAIN][entry.entry_id] is stored
+            assert control_lock_for(hass.data[DOMAIN], entry.entry_id) is lock
+            assert find_collar_cooldowns_for(hass.data[DOMAIN], entry.entry_id) is cooldowns
+            assert cooldowns == {"collar-1": 123.0}
+            rotated = {**client.token_snapshot, "refresh_token": "still-authorized"}
+            client.commit_tokens(rotated)
+            await coordinator.async_refresh()
+            await hass.async_block_till_done()
+            assert entry.data[CONF_REFRESH_TOKEN] == "still-authorized"
+            reload_spy.assert_awaited_once_with(entry.entry_id)
+            assert hass.data[DOMAIN]["_reload_requests"] == {}
+            tasks = []
+
+            def capture_task(coro, *args, **kwargs):
+                task = asyncio.create_task(coro)
+                tasks.append(task)
+                return task
+
+            with patch.object(hass, "async_create_task", side_effect=capture_task):
+                async_request_reload(hass, entry)
+                with pytest.raises(OperationNotAllowed):
+                    await tasks[0]
+            assert reload_spy.await_count == 2
+            assert entry.state is ConfigEntryState.FAILED_UNLOAD
+            assert hass.data[DOMAIN]["_reload_requests"] == {}
+    finally:
+        await coordinator.async_shutdown()
 
 
 async def test_optional_clock_failure_keeps_telemetry_available_and_diagnostics_network_free(

@@ -24,6 +24,45 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+_RELOAD_REQUESTS = "_reload_requests"
+
+
+def async_request_reload(hass, entry) -> None:
+    """Coalesce Halo reload requests independently of the entry's runtime."""
+    if hass.config_entries.async_get_entry(entry.entry_id) is not entry:
+        return
+    entry.async_cancel_retry_setup()
+    requests = hass.data.setdefault(DOMAIN, {}).setdefault(_RELOAD_REQUESTS, {})
+    worker_active = entry.entry_id in requests
+    requests[entry.entry_id] = True
+    if not worker_active:
+        # Reauth must return its successful abort before reload can abort linked flows.
+        hass.async_create_task(
+            _async_reload_worker(hass, entry, requests),
+            f"{DOMAIN} reload {entry.entry_id}",
+            eager_start=False,
+        )
+
+
+async def _async_reload_worker(hass, entry, requests: dict[str, bool]) -> None:
+    from homeassistant.config_entries import UnknownEntry
+
+    try:
+        while requests[entry.entry_id]:
+            if hass.config_entries.async_get_entry(entry.entry_id) is not entry:
+                return
+            requests[entry.entry_id] = False
+            await hass.config_entries.async_reload(entry.entry_id)
+    except UnknownEntry:
+        pass
+    finally:
+        requests.pop(entry.entry_id, None)
+
+
+def _absorb_reload_requests(hass, entry_id: str) -> None:
+    requests = hass.data.get(DOMAIN, {}).get(_RELOAD_REQUESTS, {})
+    if entry_id in requests:
+        requests[entry_id] = False
 
 
 def _scan_interval(entry) -> timedelta:
@@ -51,6 +90,7 @@ async def async_setup_entry(hass, entry) -> bool:
 
     session = async_get_clientsession(hass)
     ssl_context = await hass.async_add_executor_job(client_context)
+    _absorb_reload_requests(hass, entry.entry_id)
     data = dict(entry.data)
     credentials = _credentials(data)
     writer = _TokenWriter(hass, entry, credentials)
@@ -122,7 +162,7 @@ async def async_setup_entry(hass, entry) -> bool:
             }
             if current_collar_ids - known_collar_ids:
                 inventory_reload_pending = True
-                hass.async_create_task(hass.config_entries.async_reload(entry.entry_id))
+                async_request_reload(hass, entry)
 
         entry.async_on_unload(coordinator.async_add_listener(_reload_for_new_collars))
         setup_complete = True
@@ -140,7 +180,7 @@ async def _async_entry_updated(hass, entry) -> None:
     coordinator = stored["coordinator"]
     controls_signature = _controls_signature(entry)
     if controls_signature != stored["controls_signature"]:
-        await hass.config_entries.async_reload(entry.entry_id)
+        async_request_reload(hass, entry)
         return
     interval = _scan_interval(entry)
     if coordinator.update_interval != interval:

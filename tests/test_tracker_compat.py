@@ -4,7 +4,7 @@ import asyncio
 import ssl
 from inspect import signature
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -116,6 +116,137 @@ async def test_reauth_account_guard_uses_minimum_ha_flow_api(unique_id):
     assert result["errors"] == {"email": "account_mismatch"}
     factory.assert_not_called()
     assert entry.unique_id == unique_id
+
+
+@pytest.mark.parametrize("same_credentials", [False, True], ids=["different", "identical"])
+async def test_successful_reauth_uses_minimum_public_flow_api(tmp_path, same_credentials):
+    from homeassistant.core import HomeAssistant
+
+    entry = SimpleNamespace(
+        entry_id="entry-1",
+        unique_id="owner@example.com",
+        title="Halo Collar",
+        data={
+            "email": "owner@example.com",
+            "access_token": "access",
+            "refresh_token": "refresh",
+            "expires_at": 100.0,
+            "client_id": "synthetic-client",
+            "client_secret": "synthetic-secret",
+            "unrelated": "preserved",
+        },
+        async_cancel_retry_setup=Mock(),
+    )
+    original = dict(entry.data)
+    snapshot = {
+        "access_token": "access" if same_credentials else "new-access",
+        "refresh_token": "refresh" if same_credentials else "new-refresh",
+        "expires_at": 100.0 if same_credentials else 200.0,
+    }
+    client = SimpleNamespace(async_login=AsyncMock(), token_snapshot=snapshot)
+    flow = HaloCollarConfigFlow()
+    hass = HomeAssistant(str(tmp_path))
+    result = None
+
+    def update(current, *, data):
+        assert current is entry
+        changed = data != entry.data
+        entry.data = data
+        return changed
+
+    async def reload(entry_id):
+        assert result["reason"] == "reauth_successful"
+        assert entry.data == {**original, **snapshot}
+        return True
+
+    hass.config_entries = SimpleNamespace(
+        async_get_entry=lambda entry_id: entry,
+        async_get_known_entry=lambda entry_id: entry,
+        flow=SimpleNamespace(async_progress_by_handler=lambda *args, **kwargs: []),
+        async_update_entry=Mock(side_effect=update),
+        async_reload=AsyncMock(side_effect=reload),
+    )
+    flow.hass = hass
+    flow.context = {"entry_id": entry.entry_id, "source": "reauth"}
+    assert (await flow.async_step_reauth(entry.data))["type"] == "form"
+    with patch("custom_components.halo_collar.config_flow._client", return_value=client):
+        result = await flow.async_step_reauth_confirm(
+            {"email": " Owner@Example.COM ", "password": "synthetic-password"}
+        )
+    assert result["type"] == "abort"
+    assert result["reason"] == "reauth_successful"
+    entry.async_cancel_retry_setup.assert_called_once_with()
+    await hass.async_block_till_done()
+    hass.config_entries.async_reload.assert_awaited_once_with(entry.entry_id)
+    assert hass.data["halo_collar"]["_reload_requests"] == {}
+
+
+@pytest.mark.parametrize("outcome", ["removed", "unknown", "error", "cancel"])
+async def test_reload_owner_cleans_up_and_accepts_later_requests(outcome):
+    from homeassistant.config_entries import UnknownEntry
+
+    from custom_components.halo_collar import async_request_reload
+
+    entry = SimpleNamespace(entry_id="entry-1", async_cancel_retry_setup=Mock())
+    registered = entry
+    tasks = []
+    started = asyncio.Event()
+
+    def create_task(coro, *args, eager_start):
+        assert eager_start is False
+        entry.async_cancel_retry_setup.assert_called()
+        task = asyncio.create_task(coro)
+        tasks.append(task)
+        return task
+
+    async def reload(entry_id):
+        started.set()
+        if outcome == "unknown":
+            raise UnknownEntry(entry_id)
+        if outcome == "error":
+            raise RuntimeError("synthetic reload failure")
+        await asyncio.Event().wait()
+
+    hass = SimpleNamespace(
+        data={},
+        async_create_task=create_task,
+        config_entries=SimpleNamespace(
+            async_get_entry=lambda entry_id: registered,
+            async_reload=AsyncMock(side_effect=reload),
+        ),
+    )
+    async_request_reload(hass, entry)
+    async_request_reload(hass, entry)
+    assert len(tasks) == 1
+    entry.async_cancel_retry_setup.assert_called()
+    if outcome == "removed":
+        registered = None
+    try:
+        async with asyncio.timeout(10):
+            if outcome == "cancel":
+                await started.wait()
+                tasks[0].cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await tasks[0]
+            elif outcome == "error":
+                with pytest.raises(RuntimeError, match="synthetic reload failure"):
+                    await tasks[0]
+            else:
+                await tasks[0]
+    finally:
+        tasks[0].cancel()
+        await asyncio.gather(tasks[0], return_exceptions=True)
+    assert hass.data["halo_collar"]["_reload_requests"] == {}
+    assert hass.config_entries.async_reload.await_count == (outcome != "removed")
+    registered = SimpleNamespace(entry_id=entry.entry_id)
+    async_request_reload(hass, entry)
+    assert len(tasks) == 1
+    registered = entry
+    hass.config_entries.async_reload = AsyncMock(return_value=True)
+    async_request_reload(hass, entry)
+    await tasks[1]
+    hass.config_entries.async_reload.assert_awaited_once_with(entry.entry_id)
+    assert hass.data["halo_collar"]["_reload_requests"] == {}
 
 
 @pytest.mark.parametrize("failure_stage", ["first-refresh", "platform-forwarding"])

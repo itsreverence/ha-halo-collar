@@ -52,6 +52,25 @@ The repository must not contain real user access/refresh tokens, account credent
 
 Reauthentication binds to the saved email after trimming whitespace and lowercasing. A stored unique ID must agree with that email. Legacy entries without a unique ID use the saved email without backfilling the ID. Missing or conflicting saved identity aborts before login; a different submitted account returns an email field error before constructing a client. The flow resolves the live entry at submission and checks the saved identity and effective OAuth settings again after login. It merges only validated credential fields into current entry data, preserving unrelated concurrent data and options. This check protects the flow's update boundary. Runtime token persistence separately checks the saved credential lineage and client lifetime.
 
+Successful reauth updates the entry, requests a reload, and returns its successful
+abort before reload dispatch. It uses public APIs available in Home Assistant
+2024.12, including when credentials are unchanged or no runtime exists. It does
+not use the deprecated flow helper that combines an update listener with reload.
+
+Reauth, control-option changes, and new-collar discovery share one transient
+reload owner per entry. Queued requests coalesce. Setup absorbs outstanding
+requests immediately before its credential snapshot. Requests after that snapshot
+can require another pass. There is at most one pending intent, not a fixed limit
+on passes when requests continue. The worker belongs to Home Assistant so unloading
+the entry cannot cancel its own reload. The owner cancels scheduled setup retries and
+checks that the same entry is registered before accepting work and before dispatch.
+
+Token renewals, polling intervals, and staleness options continue to apply in
+place. Each runtime requests an inventory reload only once, including after a
+failed unload. Failed unload retains the runtime, token writer, control lock, and
+cooldowns. The reload owner clears its transient bookkeeping on exit, but does
+not make Home Assistant's nonrecoverable `FAILED_UNLOAD` state recoverable.
+
 ## Safety boundary
 
 The default installation is telemetry-only. Fence controls and Find collar use separate explicit option tiers. Entity service actions share one domain-level config-entry transaction lock that survives option-triggered reloads and force non-debounced cloud refreshes before validating current options, subscription entitlement where required, snapshot-wide one-to-one relationship mapping, and telemetry rather than trusting UI availability or cached state. A command is issued at most once with automatic redirects disabled; after any token refresh and at every immediate transport-dispatch boundary, the client revalidates options, telemetry freshness, command-specific safety state, and the exact pet/collar IDs captured by preflight. Cancellation before that synchronous dispatch boundary cancels the inner task and sends nothing; cancellation after it waits for reconciliation before propagating. Concurrent token refreshes are serialized and double-checked so a rotated refresh token is used only once. The client never replays an ambiguous HTTP/network outcome, including 401.
