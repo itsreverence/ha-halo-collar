@@ -49,8 +49,10 @@ from .helpers import last_telemetry as _last_telemetry
 from .helpers import latest_completed_walk as _latest_completed_walk
 from .helpers import nested as _nested
 from .helpers import next_expected_telemetry as _next_expected_telemetry
+from .helpers import pet_reported_activity as _pet_reported_activity
 from .helpers import pet_safety_status as _pet_safety_status
 from .helpers import pretty_status as _pretty_status
+from .helpers import reported_activity_options as _reported_activity_options
 from .helpers import seconds_to_hours as _seconds_to_hours
 from .helpers import telemetry as _telemetry
 
@@ -158,6 +160,13 @@ SENSORS = (
         state_class=SensorStateClass.MEASUREMENT,
         suggested_display_precision=1,
         value_fn=lambda c, p: _active_walk_distance(p, c),
+    ),
+    HaloSensorDescription(
+        key="last_reported_activity",
+        translation_key="last_reported_activity",
+        device_class=SensorDeviceClass.ENUM,
+        options=_reported_activity_options(),
+        value_fn=lambda _c, p: _pet_reported_activity(p),
     ),
     HaloSensorDescription(
         key="activity_duration",
@@ -374,6 +383,10 @@ WALK_SENSORS = (
         native_unit_of_measurement=UnitOfSpeed.METERS_PER_SECOND,
         suggested_display_precision=2,
     ),
+    SensorEntityDescription(
+        key="last_walk_feedback_count",
+        translation_key="last_walk_feedback_count",
+    ),
 )
 
 
@@ -416,6 +429,9 @@ class HaloWalkSensor(  # pyright: ignore[reportIncompatibleVariableOverride]
             self._attr_extra_state_attributes = {}
         elif key == "last_walk_distance":
             self._attr_native_value = summary["distance"]
+            self._attr_extra_state_attributes = {}
+        elif key == "last_walk_feedback_count":
+            self._attr_native_value = summary["feedback_count"]
             self._attr_extra_state_attributes = {}
         elif key == "last_walk_average_speed":
             duration = summary["duration"]

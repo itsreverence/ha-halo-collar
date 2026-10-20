@@ -55,6 +55,7 @@ from custom_components.halo_collar.controls import (
     find_collar_cooldowns_for,
 )
 from custom_components.halo_collar.diagnostics import async_get_config_entry_diagnostics
+from custom_components.halo_collar.helpers import reported_activity_options
 
 
 class FakeHaloClient:
@@ -733,6 +734,32 @@ async def test_runtime_insight_sensor_updates_after_coordinator_refresh(hass):
     assert float(outdoor_time.state) == 480
     assert outdoor_time.attributes["goal"] == 960.0
     assert outdoor_time.attributes["progress_percent"] == 50.0
+
+
+async def test_reported_activity_and_feedback_translations_match_enum_options(hass):
+    state = _state()
+    state.pets[0]["telemetry"]["activityType"] = 8
+    client = FakeHaloClient(state)
+    entry = _entry({CONF_ENABLE_FENCE_CONTROLS: False})
+    entry.add_to_hass(hass)
+    await _setup(hass, entry, client)
+    activity = _state_for_unique_id(hass, "sensor", "collar-1_last_reported_activity")
+    count = _state_for_unique_id(hass, "sensor", "collar-1_last_walk_feedback_count")
+    assert activity.state == "human_carry"
+    assert activity.attributes["friendly_name"] == "Cowboy Last reported activity"
+    assert count.attributes["friendly_name"] == "Cowboy Recent walk feedback count"
+    assert count.state == STATE_UNKNOWN
+    translations = await async_get_translations(hass, "en", "entity", [DOMAIN])
+    prefix = f"component.{DOMAIN}.entity.sensor.last_reported_activity.state."
+    actual = {
+        key.removeprefix(prefix): value
+        for key, value in translations.items()
+        if key.startswith(prefix)
+    }
+    assert set(actual) == set(activity.attributes["options"]) == set(reported_activity_options())
+    assert actual["human_carry"] == "Being carried"
+    assert actual["eating_drinking"] == "Eating or drinking"
+    assert client.writes == client.finds == []
 
 
 async def test_runtime_walk_sensors_are_safe_and_update_after_refresh(hass):

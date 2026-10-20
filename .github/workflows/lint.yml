@@ -66,6 +66,7 @@ jobs:
           tests/test_tracker_compat.py
           tests/test_api_transport.py
           tests/test_status_compat.py
+          tests/test_telemetry_compat.py
 
   release-artifacts:
     name: release artifact integrity

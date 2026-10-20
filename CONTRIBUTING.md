@@ -56,11 +56,14 @@ uv run --isolated --python 3.12.7 \
   --with homeassistant==2024.12.0 --with josepy==1.14.0 \
   --with pytest==8.3.3 --with pytest-asyncio==0.24.0 \
   pytest -q -p no:homeassistant-custom-component \
-  tests/test_tracker_compat.py tests/test_api_transport.py tests/test_status_compat.py
+  tests/test_tracker_compat.py tests/test_api_transport.py tests/test_status_compat.py \
+  tests/test_telemetry_compat.py
 ```
 
 This lane verifies tracker import, indoor Home state, options-flow startup, and
 control-status readability and listener isolation through real entity writes.
+It also writes and refreshes reported-activity and every recent-walk sensor,
+including enum metadata, zero feedback counts, unknown, unavailable, and cached stale values.
 Reauthentication checks call installed ConfigFlow methods and the Home Assistant
 task scheduler with synthetic entry, storage, login, and reload boundaries.
 Worker-cleanup tests also use synthetic config-entry boundaries.

@@ -64,6 +64,18 @@ _WALK_START_TRIGGER_LABELS = {
     "button": "Button",
 }
 
+_PET_ACTIVITY_OPTIONS_BY_CODE = {
+    1: "walking",
+    2: "resting",
+    3: "driving",
+    4: "running",
+    5: "eating_drinking",
+    6: "sniffing",
+    7: "lying",
+    8: "human_carry",
+    9: "on_shelf",
+}
+
 _COLLAR_ISSUE_FIELDS = (
     (("battery", "chargingIssue2IssueStatus"), "Charging"),
     (("battery", "degradationIssueStatus"), "Battery degradation"),
@@ -95,6 +107,7 @@ class WalkSummary(TypedDict):
     started_at: datetime | None
     duration: int | None
     distance: float | None
+    feedback_count: int | None
     start_trigger: str | None
 
 
@@ -224,6 +237,16 @@ def pet_safety_status(pet: dict[str, Any] | None) -> Any:
     return pretty_status(nested(pet or {}, "telemetry", "safetyStatus"))
 
 
+def pet_reported_activity(pet: dict[str, Any] | None) -> str | None:
+    """Return the pet's reported activity classification for a known integer code."""
+    raw = nested(pet or {}, "telemetry", "activityType")
+    return _PET_ACTIVITY_OPTIONS_BY_CODE.get(raw) if type(raw) is int else None
+
+
+def reported_activity_options() -> list[str]:
+    return list(_PET_ACTIVITY_OPTIONS_BY_CODE.values())
+
+
 def active_walk_state(pet: dict[str, Any] | None, collar: dict[str, Any] | None) -> bool | None:
     """Return the two authoritative collar walk snapshots as a tri-state value."""
     payloads = (
@@ -308,6 +331,7 @@ def latest_completed_walk(walks: list[dict[str, Any]], pet_id: Any) -> WalkSumma
             "started_at": started_at,
             "duration": duration,
             "distance": distance,
+            "feedback_count": non_negative_integer(pet.get("feedbacksCount")),
             "start_trigger": trigger,
         }
         if newest is None or ended_at > newest["ended_at"]:

@@ -42,9 +42,15 @@ The Find status sensor owns one local expiry timer, independently of the button.
 
 ### Recent-walk history
 
-The integration requests `/walk/my?page=1&pageSize=10` and retains at most ten returned records. It selects the newest matching completed walk by valid `endedAt`, then exposes end time, duration, distance, and locally derived average speed. The request has no completed-only filter and the integration does not guarantee provider ordering.
+The integration requests `/walk/my?page=1&pageSize=10` and retains at most ten returned records. It selects the newest matching completed walk by valid `endedAt`, then exposes end time, duration, distance, locally derived average speed, and the per-pet feedback count. A missing or invalid count leaves that metric unknown without selecting an older walk. The request has no completed-only filter and the integration does not guarantee provider ordering.
 
-History is optional enrichment, not live tracking. Unknown can mean no valid matching record in that window or an optional history timeout or error. It does not prove that no historical walk exists. Recent-walk entities never expose route, location, user, walk-ID, feedback, or correction fields.
+History is optional enrichment, not live tracking. Unknown can mean no valid matching record in that window or an optional history timeout or error. It does not prove that no historical walk exists. Recent-walk entities never expose route, location, user, walk-ID, feedback objects, or correction fields. The scalar `feedbacksCount` is allowlisted and normalized as a non-negative integer, without cumulative statistics or feedback-type inference.
+
+### Last reported activity
+
+The sensor reads only `pet.telemetry.activityType` through the existing exact pet relationship. Known integer codes map to stable translated enum states. Missing, malformed, zero, and unknown codes produce unknown. Booleans, floats, and strings are rejected. Cached known classifications remain visible when collar reports age. A failed required refresh makes telemetry unavailable. No extra requests or timers are added.
+
+Activity and feedback fields are grounded in static source evidence and synthetic tests. Live availability and JSON casing remain unvalidated for this unofficial API.
 
 ## Authentication
 
