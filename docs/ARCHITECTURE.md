@@ -36,6 +36,10 @@ Home Assistant config entry (email, tokens, expiry, OAuth client settings; no pa
 - `switch`: full fence mode including disable, available only after the separate high-risk opt-in.
 - `diagnostics`: redacted config-entry diagnostics (tokens, serials, coordinates, names removed).
 
+Opted-in actions also add enum status sensors in the diagnostic category. A pure classifier derives advisory reasons from cached state, current options, the shared freshness cap, and the existing cooldown map. Status sensors remain available through cloud and mapping failures. Their values never authorize dispatch or confirm physical execution.
+
+The Find status sensor owns one local expiry timer, independently of the button. An entry-and-collar-scoped dispatcher notification reaches the current sensor when an older button transaction finishes after a reload. Timer expiry and status evaluation make no Halo requests. Report-age changes appear on the next state update rather than through a dedicated expiry timer.
+
 ### Recent-walk history
 
 The integration requests `/walk/my?page=1&pageSize=10` and retains at most ten returned records. It selects the newest matching completed walk by valid `endedAt`, then exposes end time, duration, distance, and locally derived average speed. The request has no completed-only filter and the integration does not guarantee provider ordering.
@@ -91,14 +95,14 @@ not make Home Assistant's nonrecoverable `FAILED_UNLOAD` state recoverable.
 The default installation is telemetry-only. Fence controls and Find collar require separate explicit option tiers. Entity availability alone never authorizes a command.
 
 1. Acquire the domain-level config-entry transaction lock, which survives option-triggered reloads.
-2. Force a non-debounced cloud refresh. Validate current options, required entitlement, snapshot-wide one-to-one pet/collar mapping, and telemetry. Controls use the shorter of **Offline after** and 900 seconds.
+2. Force a non-debounced cloud refresh. Validate current options, required entitlement, snapshot-wide one-to-one pet/collar mapping, and telemetry. Controls use the shorter of **Collar report age limit** and 900 seconds.
 3. After any token refresh and immediately before transport dispatch, revalidate options, telemetry freshness, command-specific safety state, and the exact pet/collar IDs captured by preflight. Concurrent token refreshes are serialized and double-checked.
 4. Dispatch at most one request with redirects disabled. Never replay an ambiguous HTTP or network outcome, including 401.
 5. Retain the lock through read-only post-dispatch reconciliation. Cancellation before the synchronous dispatch boundary cancels the inner task and sends nothing. Cancellation after dispatch waits for reconciliation before propagating.
 
 Fence changes require fresh synchronized reported-state confirmation. Fence-off additionally requires both fence-control opt-ins and rejects active or unknown walks.
 
-Find collar requests the physical Return Whistle sound and light command, described as lasting 10 seconds. It may confuse a pet wearing the collar. It requires its own opt-in, enabled `findcollar` entitlement, fresh exact mapping, and no active or unknown walk. A reload-stable per-collar **60-second cooldown** starts immediately before every attempted dispatch, including failed or ambiguous outcomes. The endpoint exposes no durable sound/light confirmation state. An unambiguous provider success means command acceptance, not verified physical execution. A 404 or ambiguous result remains an error and is never retried.
+Find collar requests the physical Return Whistle sound and light command. It may confuse a pet wearing the collar. It requires its own opt-in, enabled `findcollar` entitlement, fresh exact mapping, and no active or unknown walk. A reload-stable per-collar **60-second cooldown** starts immediately before every attempted dispatch, including failed or ambiguous outcomes. The endpoint exposes no durable sound/light confirmation state. An unambiguous provider success means command acceptance, not verified physical execution. A 404 or ambiguous result remains an error and is never retried.
 
 Each PUT owns a fresh session and connector that refuses a second connection lease. This blocks aiohttp's disconnected-PUT replay path on the dependency versions covered by the socket tests. Write sessions preserve Home Assistant's verified TLS context, default headers, and `trust_env` policy, but use the system threaded resolver instead of Home Assistant's shared DNS cache and connection pool. Resource preparation precedes the dispatch callback; all write resources close with the request. The shared telemetry session is unchanged.
 

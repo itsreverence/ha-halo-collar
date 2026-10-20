@@ -39,16 +39,16 @@
         "title": "Halo Collar options",
         "data": {
           "scan_interval": "Update interval (seconds)",
-          "stale_after": "Offline after (seconds)",
+          "stale_after": "Collar report age limit (seconds)",
           "enable_fence_controls": "Enable fail-safe fence controls",
           "enable_find_collar": "Enable Find collar sound and light",
           "allow_fence_disable": "Allow fences to be disabled (requires fence controls)"
         },
         "data_description": {
           "scan_interval": "How often to poll the Halo cloud for new telemetry. Between 60 and 3600 seconds; the collar itself typically reports every few minutes.",
-          "stale_after": "How long after the collar's last report the connectivity sensor turns off. Between 120 and 86400 seconds.",
+          "stale_after": "Report age after which Connectivity turns off. This reflects the last collar report, not a live connection check. Polling the cloud does not force a collar report. Between 120 and 86400 seconds. Controls always require reports no older than 900 seconds, or this limit if shorter.",
           "enable_fence_controls": "Adds an idempotent Enable fences button. Controls remain unavailable when collar telemetry is stale.",
-          "enable_find_collar": "Adds a manual button that makes the collar blink and play a sound for 10 seconds. Halo warns this may confuse a pet wearing it. The command is blocked on stale/ambiguous state, active or unknown walks, missing subscription entitlement, and a post-dispatch cooldown; ambiguous outcomes are never retried.",
+          "enable_find_collar": "Adds a manual sound and light button. It may confuse a pet wearing the collar. The command is blocked on stale/ambiguous state, active or unknown walks, missing subscription entitlement, and a post-dispatch cooldown; ambiguous outcomes are never retried.",
           "allow_fence_disable": "Also adds a Fence mode switch that can disable containment. This remains off unless fail-safe fence controls are enabled, requires a separate high-risk opt-in, and is blocked during an active walk."
         }
       }
@@ -56,6 +56,60 @@
   },
   "entity": {
     "sensor": {
+      "enable_fences_status": {
+        "name": "Enable fences status",
+        "state": {
+          "ready": "Ready to try",
+          "disabled": "Disabled in integration options",
+          "cloud_unavailable": "Cloud refresh failed",
+          "mapping_unavailable": "Pet and collar mapping unavailable",
+          "report_unknown": "Collar report time unknown",
+          "report_stale": "Waiting for a usable collar report",
+          "fence_sync_unknown": "Fence synchronization unknown",
+          "fences_not_synchronized": "Fences not synchronized",
+          "fence_mode_unknown": "Reported fence mode unknown",
+          "walk_unknown": "Walk state unknown",
+          "walk_active": "Blocked during a walk",
+          "entitlement_unconfirmed": "Find collar entitlement not confirmed",
+          "cooldown": "Find collar cooldown"
+        }
+      },
+      "disable_fences_status": {
+        "name": "Disable fences status",
+        "state": {
+          "ready": "Ready to try",
+          "disabled": "Disabled in integration options",
+          "cloud_unavailable": "Cloud refresh failed",
+          "mapping_unavailable": "Pet and collar mapping unavailable",
+          "report_unknown": "Collar report time unknown",
+          "report_stale": "Waiting for a usable collar report",
+          "fence_sync_unknown": "Fence synchronization unknown",
+          "fences_not_synchronized": "Fences not synchronized",
+          "fence_mode_unknown": "Reported fence mode unknown",
+          "walk_unknown": "Walk state unknown",
+          "walk_active": "Blocked during a walk",
+          "entitlement_unconfirmed": "Find collar entitlement not confirmed",
+          "cooldown": "Find collar cooldown"
+        }
+      },
+      "find_collar_status": {
+        "name": "Find collar status",
+        "state": {
+          "ready": "Ready to try",
+          "disabled": "Disabled in integration options",
+          "cloud_unavailable": "Cloud refresh failed",
+          "mapping_unavailable": "Pet and collar mapping unavailable",
+          "report_unknown": "Collar report time unknown",
+          "report_stale": "Waiting for a usable collar report",
+          "fence_sync_unknown": "Fence synchronization unknown",
+          "fences_not_synchronized": "Fences not synchronized",
+          "fence_mode_unknown": "Reported fence mode unknown",
+          "walk_unknown": "Walk state unknown",
+          "walk_active": "Blocked during a walk",
+          "entitlement_unconfirmed": "Find collar entitlement not confirmed",
+          "cooldown": "Find collar cooldown"
+        }
+      },
       "battery": {"name": "Battery"},
       "battery_status": {"name": "Battery status"},
       "remaining_battery_lifetime": {"name": "Battery runtime"},

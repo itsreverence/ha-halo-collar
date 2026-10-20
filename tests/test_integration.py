@@ -13,8 +13,13 @@ pytest.importorskip("homeassistant")
 
 from homeassistant.config_entries import SOURCE_REAUTH, ConfigEntryState
 from homeassistant.const import STATE_OFF, STATE_ON, STATE_UNAVAILABLE, STATE_UNKNOWN
+from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.dispatcher import async_dispatcher_connect, async_dispatcher_send
+from homeassistant.helpers.entity_component import DATA_INSTANCES
+from homeassistant.helpers.translation import async_get_translations
 from homeassistant.setup import async_setup_component
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import (
@@ -43,6 +48,7 @@ from custom_components.halo_collar.const import (
     DEFAULT_AUTH_BASE,
     DOMAIN,
 )
+from custom_components.halo_collar.control_status import find_status_signal
 from custom_components.halo_collar.controls import (
     HaloControlError,
     control_lock_for,
@@ -419,6 +425,10 @@ async def test_find_collar_button_is_opt_in_and_dispatches_one_synthetic_command
     entity_id = er.async_get(hass).async_get_entity_id("button", DOMAIN, f"{collar_id}_find_collar")
     assert entity_id == "button.cowboy_find_collar_sound_and_light"
     assert hass.states.get(entity_id).state != STATE_UNAVAILABLE
+    status = _state_for_unique_id(hass, "sensor", "collar-1_find_collar_status")
+    assert status.state == "ready"
+    assert status.attributes["device_class"] == "enum"
+    assert status.attributes["advisory"] is True
 
     await hass.services.async_call(
         "button",
@@ -432,6 +442,7 @@ async def test_find_collar_button_is_opt_in_and_dispatches_one_synthetic_command
     assert client.writes == []
     assert client.fetches == 3
     assert hass.states.get(entity_id).state == STATE_UNAVAILABLE
+    assert _state_for_unique_id(hass, "sensor", "collar-1_find_collar_status").state == "cooldown"
 
     clock[0] += 61.0
     async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=61))
@@ -439,6 +450,271 @@ async def test_find_collar_button_is_opt_in_and_dispatches_one_synthetic_command
 
     assert hass.states.get(entity_id).state != STATE_UNAVAILABLE
     assert client.fetches == 3
+    assert _state_for_unique_id(hass, "sensor", "collar-1_find_collar_status").state == "ready"
+
+
+@pytest.mark.parametrize(
+    "options,actions",
+    [
+        ({CONF_ENABLE_FENCE_CONTROLS: False}, set()),
+        ({}, {"enable_fences"}),
+        ({CONF_ALLOW_FENCE_DISABLE: True}, {"enable_fences", "disable_fences"}),
+        (
+            {CONF_ENABLE_FENCE_CONTROLS: False, CONF_ALLOW_FENCE_DISABLE: True},
+            set(),
+        ),
+        (
+            {CONF_ENABLE_FENCE_CONTROLS: False, CONF_ENABLE_FIND_COLLAR: True},
+            {"find_collar"},
+        ),
+    ],
+)
+async def test_status_entities_follow_existing_opt_in_tiers(hass, options, actions):
+    client = FakeHaloClient(_state())
+    entry = _entry(options)
+    entry.add_to_hass(hass)
+    await _setup(hass, entry, client)
+    registry = er.async_get(hass)
+    translations = await async_get_translations(hass, "en", "entity", [DOMAIN])
+    for action in ("enable_fences", "disable_fences", "find_collar"):
+        entity_id = registry.async_get_entity_id("sensor", DOMAIN, f"collar-1_{action}_status")
+        assert (entity_id is not None) == (action in actions)
+        if entity_id is not None:
+            state = hass.states.get(entity_id)
+            assert state.state == "ready"
+            assert state.attributes["advisory"] is True
+            for reason in state.attributes["options"]:
+                assert translations[
+                    f"component.{DOMAIN}.entity.sensor.{action}_status.state.{reason}"
+                ]
+    assert client.fetches == 1
+    assert client.writes == client.finds == []
+    assert (
+        _state_for_unique_id(hass, "sensor", "collar-1_last_telemetry").attributes["device_class"]
+        == "timestamp"
+    )
+    assert (
+        _state_for_unique_id(hass, "binary_sensor", "collar-1_online").attributes["device_class"]
+        == "connectivity"
+    )
+
+
+async def test_status_remains_readable_through_unknown_stale_missing_and_cloud_failure(hass):
+    client = ToggleFailureClient(_state())
+    entry = _entry({CONF_ENABLE_FIND_COLLAR: True, CONF_ALLOW_FENCE_DISABLE: True})
+    entry.add_to_hass(hass)
+    await _setup(hass, entry, client)
+    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+
+    async def refresh_and_expect(expected):
+        await coordinator.async_refresh()
+        await hass.async_block_till_done()
+        for action in ("enable_fences", "disable_fences", "find_collar"):
+            status = _state_for_unique_id(hass, "sensor", f"collar-1_{action}_status")
+            assert status.state == expected
+
+    client.state.collars[0]["telemetry"]["manifest"].clear()
+    await refresh_and_expect("report_unknown")
+    client.state.collars[0]["telemetry"]["manifest"]["timestamp"] = (
+        datetime.now(UTC) - timedelta(seconds=1000)
+    ).isoformat()
+    await refresh_and_expect("report_stale")
+    client.state.pets.clear()
+    await refresh_and_expect("mapping_unavailable")
+    client.state.collars.clear()
+    await refresh_and_expect("mapping_unavailable")
+    client.error = HaloApiError("synthetic outage")
+    await refresh_and_expect("cloud_unavailable")
+    client.error = None
+    client.state = _state()
+    await refresh_and_expect("ready")
+
+
+async def test_advisory_ready_does_not_authorize_a_find_after_fresh_walk_rejection(hass):
+    client = FakeHaloClient(_state())
+    entry = _entry({CONF_ENABLE_FIND_COLLAR: True})
+    entry.add_to_hass(hass)
+    await _setup(hass, entry, client)
+    assert _state_for_unique_id(hass, "sensor", "collar-1_find_collar_status").state == "ready"
+    client.state = deepcopy(client.state)
+    client.state.collars[0]["telemetry"]["walk"] = {}
+    button = _state_for_unique_id(hass, "button", "collar-1_find_collar")
+    with pytest.raises(HomeAssistantError, match="active or unknown walk"):
+        await hass.services.async_call(
+            "button", "press", {"entity_id": button.entity_id}, blocking=True
+        )
+    await hass.async_block_till_done()
+    assert client.finds == []
+    assert client.fetches == 2
+    assert (
+        _state_for_unique_id(hass, "sensor", "collar-1_find_collar_status").state == "walk_active"
+    )
+
+
+async def test_find_status_notifications_are_scoped_to_entry_and_collar(hass, monkeypatch):
+    monkeypatch.setattr(
+        "custom_components.halo_collar.controls.time", SimpleNamespace(monotonic=lambda: 1000.0)
+    )
+    client = FakeHaloClient(_state_with_second_collar())
+    entry = _entry({CONF_ENABLE_FIND_COLLAR: True})
+    entry.add_to_hass(hass)
+    await _setup(hass, entry, client)
+    cooldowns = find_collar_cooldowns_for(hass.data[DOMAIN], entry.entry_id)
+    cooldowns.update({"collar-1": 1000.0, "collar-2": 1000.0})
+    async_dispatcher_send(hass, find_status_signal("other-entry", "collar-1"))
+    assert _state_for_unique_id(hass, "sensor", "collar-1_find_collar_status").state == "ready"
+    async_dispatcher_send(hass, find_status_signal(entry.entry_id, "collar-1"))
+    assert _state_for_unique_id(hass, "sensor", "collar-1_find_collar_status").state == "cooldown"
+    assert _state_for_unique_id(hass, "sensor", "collar-2_find_collar_status").state == "ready"
+    async_dispatcher_send(hass, find_status_signal(entry.entry_id, "collar-2"))
+    assert _state_for_unique_id(hass, "sensor", "collar-2_find_collar_status").state == "cooldown"
+    assert client.fetches == 1
+
+
+async def test_find_status_restores_cooldown_on_reload_with_button_disabled(hass, monkeypatch):
+    clock = [1000.0]
+    monkeypatch.setattr(
+        "custom_components.halo_collar.controls.time", SimpleNamespace(monotonic=lambda: clock[0])
+    )
+    client = FakeHaloClient(_state())
+    entry = _entry({CONF_ENABLE_FIND_COLLAR: True})
+    entry.add_to_hass(hass)
+    await _setup(hass, entry, client)
+    button = _state_for_unique_id(hass, "button", "collar-1_find_collar")
+    status_id = _state_for_unique_id(hass, "sensor", "collar-1_find_collar_status").entity_id
+    await hass.services.async_call(
+        "button", "press", {"entity_id": button.entity_id}, blocking=True
+    )
+    assert hass.states.get(status_id).state == "cooldown"
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    er.async_get(hass).async_update_entity(
+        button.entity_id, disabled_by=er.RegistryEntryDisabler.USER
+    )
+    clock[0] += 20
+    await _setup(hass, entry, client)
+    assert hass.states.get(status_id).state == "cooldown"
+    fetches = client.fetches
+    clock[0] += 41
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=41))
+    await hass.async_block_till_done()
+    assert hass.states.get(status_id).state == "ready"
+    assert client.fetches == fetches
+
+
+@pytest.mark.parametrize("failed_reconciliation", [False, True])
+async def test_status_cooldown_lifecycle_survives_button_disabled_after_reload(
+    hass, monkeypatch, failed_reconciliation
+):
+    clock = [1000.0]
+    monkeypatch.setattr(
+        "custom_components.halo_collar.controls.time", SimpleNamespace(monotonic=lambda: clock[0])
+    )
+    client = ToggleFailureClient(_state())
+    entry = _entry({CONF_ENABLE_FIND_COLLAR: True})
+    entry.add_to_hass(hass)
+    await _setup(hass, entry, client)
+    registry = er.async_get(hass)
+    button_id = registry.async_get_entity_id("button", DOMAIN, "collar-1_find_collar")
+    old_button = hass.data[DATA_INSTANCES]["button"].get_entity(button_id)
+    old_coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    cooldowns = find_collar_cooldowns_for(hass.data[DOMAIN], entry.entry_id)
+    status_id = _state_for_unique_id(hass, "sensor", "collar-1_find_collar_status").entity_id
+    dispatch_waiting = asyncio.Event()
+    release_dispatch = asyncio.Event()
+
+    async def late_dispatch(collar_id, *, pre_dispatch):
+        dispatch_waiting.set()
+        await release_dispatch.wait()
+        pre_dispatch()
+        client.finds.append(collar_id)
+        if failed_reconciliation:
+            client.error = HaloApiError("synthetic reconciliation outage")
+
+    client.async_find_collar = late_dispatch
+    task = asyncio.create_task(old_button.async_press())
+    try:
+        async with asyncio.timeout(10):
+            await dispatch_waiting.wait()
+            assert await hass.config_entries.async_unload(entry.entry_id)
+            registry.async_update_entity(button_id, disabled_by=er.RegistryEntryDisabler.USER)
+            await _setup(hass, entry, client)
+            assert hass.data[DOMAIN][entry.entry_id]["coordinator"] is not old_coordinator
+            assert find_collar_cooldowns_for(hass.data[DOMAIN], entry.entry_id) is cooldowns
+            assert hass.data[DATA_INSTANCES]["button"].get_entity(button_id) is None
+            assert hass.states.get(status_id).state == "ready"
+            release_dispatch.set()
+            await task
+    finally:
+        release_dispatch.set()
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+    await hass.async_block_till_done()
+    assert client.finds == ["collar-1"]
+    assert hass.states.get(status_id).state == "cooldown"
+    fetches = client.fetches
+    for _ in range(3):
+        async_dispatcher_send(hass, find_status_signal(entry.entry_id, "collar-1"))
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=61))
+    await hass.async_block_till_done()
+    assert hass.states.get(status_id).state == "cooldown"
+    assert client.fetches == fetches
+    clock[0] += 61
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=122))
+    await hass.async_block_till_done()
+    assert hass.states.get(status_id).state == "ready"
+    assert client.fetches == fetches
+    cooldowns["collar-1"] = clock[0]
+    async_dispatcher_send(hass, find_status_signal(entry.entry_id, "collar-1"))
+    assert hass.states.get(status_id).state == "cooldown"
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+    removed = hass.states.get(status_id)
+    async_dispatcher_send(hass, find_status_signal(entry.entry_id, "collar-1"))
+    clock[0] += 61
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=244))
+    await hass.async_block_till_done()
+    assert hass.states.get(status_id) == removed
+    assert client.fetches == fetches
+
+
+@pytest.mark.parametrize("failure", [False, True])
+async def test_find_status_listener_failure_cannot_change_transaction_result(hass, failure):
+    client = FakeHaloClient(_state())
+    entry = _entry({CONF_ENABLE_FIND_COLLAR: True})
+    entry.add_to_hass(hass)
+    await _setup(hass, entry, client)
+    button = _state_for_unique_id(hass, "button", "collar-1_find_collar")
+
+    @callback
+    def broken_listener():
+        raise RuntimeError("synthetic advisory listener failure")
+
+    remove = async_dispatcher_connect(
+        hass, find_status_signal(entry.entry_id, "collar-1"), broken_listener
+    )
+    if failure:
+
+        async def reject(collar_id, *, pre_dispatch):
+            raise HaloControlError("synthetic transaction rejection")
+
+        client.async_find_collar = reject
+    try:
+        if failure:
+            with pytest.raises(HomeAssistantError, match="synthetic transaction rejection"):
+                await hass.services.async_call(
+                    "button", "press", {"entity_id": button.entity_id}, blocking=True
+                )
+        else:
+            await hass.services.async_call(
+                "button", "press", {"entity_id": button.entity_id}, blocking=True
+            )
+        await hass.async_block_till_done()
+        assert client.finds == ([] if failure else ["collar-1"])
+        assert _state_for_unique_id(hass, "sensor", "collar-1_find_collar_status").state == (
+            "ready" if failure else "cooldown"
+        )
+    finally:
+        remove()
 
 
 async def test_runtime_insight_sensor_updates_after_coordinator_refresh(hass):
@@ -1353,11 +1629,14 @@ async def test_reload_during_setup_uses_latest_credentials_and_controls(
     assert _state_for_unique_id(hass, "button", "collar-1_find_collar").state != STATE_UNAVAILABLE
 
 
-async def test_inventory_failed_unload_retains_authority_without_poll_retries(hass):
+async def test_inventory_failed_unload_retains_authority_without_poll_retries(hass, monkeypatch):
     from homeassistant.config_entries import OperationNotAllowed
 
     from custom_components.halo_collar import async_request_reload
 
+    monkeypatch.setattr(
+        "custom_components.halo_collar.controls.time", SimpleNamespace(monotonic=lambda: 123.0)
+    )
     client = FakeHaloClient(_state())
     entry = _entry({CONF_ENABLE_FIND_COLLAR: True})
     entry.add_to_hass(hass)
@@ -1404,6 +1683,7 @@ async def test_inventory_failed_unload_retains_authority_without_poll_retries(ha
             assert entry.state is ConfigEntryState.FAILED_UNLOAD
             assert hass.data[DOMAIN]["_reload_requests"] == {}
     finally:
+        await hass.data[DATA_INSTANCES]["sensor"]._async_reset()
         await coordinator.async_shutdown()
 
 

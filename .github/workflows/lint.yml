@@ -65,6 +65,7 @@ jobs:
           pytest -q -p no:homeassistant-custom-component
           tests/test_tracker_compat.py
           tests/test_api_transport.py
+          tests/test_status_compat.py
 
   release-artifacts:
     name: release artifact integrity

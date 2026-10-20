@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any, cast
 
 from homeassistant.components.sensor import (
@@ -17,11 +18,22 @@ from homeassistant.const import (
     UnitOfSpeed,
     UnitOfTime,
 )
+from homeassistant.core import callback
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity import Entity
+from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .api import HaloState
 from .const import DOMAIN
+from .control_status import (
+    ControlAction,
+    ControlReason,
+    control_status_reason,
+    enabled_control_actions,
+    find_status_signal,
+)
+from .controls import control_stale_after, find_collar_cooldown_remaining, find_collar_cooldowns_for
 from .entity import HaloEntity
 from .helpers import WalkSummary as _WalkSummary
 from .helpers import active_walk_distance as _active_walk_distance
@@ -231,7 +243,84 @@ async def async_setup_entry(hass, entry, async_add_entities):
         for description in WALK_SENSORS
     )
     entities.append(HaloSubscriptionSensor(coordinator, entry))
+    actions = enabled_control_actions(entry.options)
+    if actions:
+        cooldowns = find_collar_cooldowns_for(hass.data[DOMAIN], entry.entry_id)
+        entities.extend(
+            HaloControlStatusSensor(coordinator, entry, collar, action, cooldowns)
+            for collar in coordinator.data.collars
+            for action in actions
+        )
     async_add_entities(entities)
+
+
+class HaloControlStatusSensor(HaloEntity, SensorEntity):
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = list(ControlReason)
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_extra_state_attributes = {"advisory": True}
+
+    def __init__(self, coordinator, entry, collar, action: ControlAction, cooldowns) -> None:
+        super().__init__(coordinator, entry, collar)
+        self._action = action
+        self._cooldowns = cooldowns
+        self._cancel_expiry: Callable[[], None] | None = None
+        self._attr_unique_id = f"{self._collar_id}_{action}_status"
+        self._attr_translation_key = f"{action}_status"
+
+    @property
+    def available(self) -> bool:
+        return True
+
+    @property
+    def native_value(self) -> str:
+        return control_status_reason(
+            cast(HaloState, self.coordinator.data),
+            action=self._action,
+            collar_id=self._collar_id,
+            options=self._entry.options,
+            cloud_success=self.coordinator.last_update_success,
+            stale_after=control_stale_after(self._entry),
+            cooldown_remaining=find_collar_cooldown_remaining(self._cooldowns, self._collar_id),
+            now=datetime.now(UTC),
+        )
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        if self._action == "find_collar":
+            self.async_on_remove(
+                async_dispatcher_connect(
+                    self.hass,
+                    find_status_signal(self._entry.entry_id, self._collar_id),
+                    self._handle_coordinator_update,
+                )
+            )
+            self.async_on_remove(self._cancel_expiry_timer)
+            self._schedule_expiry()
+
+    @callback
+    def _cancel_expiry_timer(self) -> None:
+        if self._cancel_expiry is not None:
+            self._cancel_expiry()
+            self._cancel_expiry = None
+
+    @callback
+    def _schedule_expiry(self) -> None:
+        self._cancel_expiry_timer()
+        remaining = find_collar_cooldown_remaining(self._cooldowns, self._collar_id)
+        if remaining > 0:
+            self._cancel_expiry = async_call_later(self.hass, remaining, self._cooldown_expired)
+
+    @callback
+    def _cooldown_expired(self, _now) -> None:
+        self._cancel_expiry = None
+        self._handle_coordinator_update()
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        if self._action == "find_collar":
+            self._schedule_expiry()
+        super()._handle_coordinator_update()
 
 
 class HaloSensor(HaloEntity, SensorEntity):

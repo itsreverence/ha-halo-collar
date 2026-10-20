@@ -5,6 +5,7 @@ from typing import cast
 from homeassistant.components.button import ButtonEntity
 from homeassistant.core import callback
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_call_later
 
 from .api import HaloApiError, HaloState
@@ -13,6 +14,7 @@ from .const import (
     CONF_ENABLE_FIND_COLLAR,
     DOMAIN,
 )
+from .control_status import find_status_signal
 from .controls import (
     HaloControlError,
     async_find_collar,
@@ -186,4 +188,7 @@ class HaloFindCollarButton(HaloEntity, ButtonEntity):
         except (HaloApiError, HaloControlError) as err:
             raise HomeAssistantError(f"Could not find Halo collar: {err}") from err
         finally:
+            async_dispatcher_send(
+                self.hass, find_status_signal(self._entry.entry_id, self._collar_id)
+            )
             self._schedule_cooldown_update()

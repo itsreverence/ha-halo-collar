@@ -17,7 +17,7 @@
 | **Connectivity** is off | The report timestamp is old, missing, invalid, or too far in the future. Check **Last telemetry** and the official app. Connectivity reflects report age at the next state update, not a live connection test. |
 | One sensor is **unknown** | Halo may omit that optional value or return an invalid value. Check related telemetry. Unknown does not mean safe, off, or zero. |
 | Recent-walk sensors are **unknown** | No valid matching completed walk may exist in the first ten records returned by Halo, or the optional history request failed or timed out. This does not prove that no historical walk exists. |
-| Entities are **unavailable** | Check the integration's setup, authentication, or refresh error. Required refresh failures make entities unavailable until a successful refresh. A removed collar also becomes unavailable. Reauthenticate only when prompted. |
+| Telemetry entities are **unavailable** | Check the integration's setup, authentication, or refresh error. Required refresh failures make telemetry unavailable until a successful refresh. A removed collar also becomes unavailable. Advisory control-status sensors remain readable. Reauthenticate only when prompted. |
 | The tracker reports `home` but its map position differs | Halo's indoor and Wi-Fi indicators override the Home state. The integration does not verify the network or physical home location and keeps Halo's coordinates. Compare with the official app. |
 
 ## Recover authentication
@@ -34,12 +34,16 @@ If you choose to remove and add the integration again, first back up Home Assist
 
 Start with the integration status, the named telemetry entities, and any error shown for the action. Control availability can change after a fresh cloud read. An available button or switch does not guarantee that its action will pass the dispatch checks.
 
+Open the collar's device page and scroll to **Diagnostic**. Each opted-in action has a status sensor that explains a cached blocker. **Ready to try** is advisory. Report age and other state can change before the next update, and the action always validates fresh state. The disable-fences status can show a walk blocker even while the switch remains available for turning fences on.
+
+At the maximum one-hour update interval, outdated readiness can remain visible until the next hourly poll. The action still rejects stale reports immediately when you try it.
+
 | What you see | What to check and do |
 | --- | --- |
 | A control is missing | Check **Configure** on the integration. **Enable fail-safe fence controls** adds **Enable fences**. **Allow fences to be disabled** also requires fence controls and adds **Fence mode**. **Enable Find collar sound and light** separately adds **Find collar**. Only opt in to controls you intend to use. |
-| Controls remain in the registry but are unavailable after an option change | Disabling an opt-in reloads the integration. Home Assistant can retain the old entity as unavailable. Review any automation that still references it. |
+| Controls or their status sensors remain in the registry but are unavailable after an option change | Disabling an opt-in reloads the integration. Home Assistant can retain the old entities as unavailable. Review any automation that still references them. |
 | Telemetry and controls are unavailable | Check the integration for setup, authentication, or cloud errors. Complete [same-account reauthentication](#recover-authentication) when prompted. For connection failures, wait for a successful refresh and compare telemetry with the official Halo app. |
-| Connectivity is on but a control is unavailable or rejects stale state | Check **Last telemetry**. Controls use the shorter of **Offline after** and 900 seconds. Increasing the connectivity threshold cannot extend that cap. Wait for fresh collar telemetry. A cloud poll does not force a collar report. |
+| Connectivity is on but a control is unavailable or rejects stale state | Check **Last telemetry**. Controls use the shorter of **Collar report age limit** and 900 seconds. Increasing the connectivity threshold cannot extend that cap. Wait for fresh collar telemetry. A cloud poll does not force a collar report. |
 | An action reports missing or changed pet/collar mapping | Check the assigned collar in the official Halo app and wait for consistent cloud telemetry. Commands require one exact pet/collar mapping and recheck it immediately before dispatch. |
 | **Fence mode** is unavailable, fence-off is rejected, or a fence change cannot be confirmed | Check **Fences enabled**, **Fence state synchronized**, and **Active walk**. The switch requires known reported fence mode and synchronized state. Fence-off also requires both control opt-ins and no active or unknown walk. Fence changes require fresh reported-state confirmation. An unconfirmed command is not proof that containment changed; check the official app and your pet's safety before deciding what to do next. |
 | **Find collar** is unavailable or rejected | Check freshness, mapping, and **Active walk**. Active or unknown walks block Find collar. Halo must also report the enabled `findcollar` subscription feature. The **Subscription** summary does not expose this entitlement; check the official app or Halo support for account access. |
