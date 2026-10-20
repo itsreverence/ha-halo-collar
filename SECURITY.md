@@ -1,4 +1,4 @@
-# Security Policy
+# Security policy
 
 ## Supported versions
 
@@ -18,7 +18,7 @@ Include:
 
 ## Sensitive data and credential response
 
-The integration exchanges Halo account credentials for OAuth tokens and does not persist the password. Home Assistant stores the resulting tokens in its config entry. Treat Home Assistant backups, diagnostics, API captures, and logs as sensitive until reviewed.
+The integration exchanges Halo account credentials for OAuth tokens and does not persist the password. Home Assistant stores tokens, expiry, normalized email, and OAuth client settings in its config entry. Treat Home Assistant backups, diagnostics, API captures, and logs as sensitive until reviewed.
 
 If a password or token is exposed:
 
@@ -29,11 +29,7 @@ If a password or token is exposed:
 
 ## Safety boundary
 
-Halo Collar is **telemetry-only by default**. The only supported mutations are the separately opted-in, fail-closed controls documented by this project:
-
-- idempotently enabling fence mode;
-- disabling fence mode only after a second, higher-risk opt-in and fresh active-walk checks;
-- issuing one guarded Find Collar sound-and-light command with entitlement, identity, telemetry, walk-state, and cooldown checks.
+Halo Collar is **telemetry-only by default**. The only supported writes are opt-in fence controls and Find collar. Fence-off requires a stronger opt-in and rejects active or unknown walks. Fence changes require reported-state confirmation. Find collar requires entitlement, fresh exact mapping, no active or unknown walk, and a cooldown. Provider acceptance does not verify physical execution. See [control transactions](docs/ARCHITECTURE.md#control-transactions) for the full guarantees.
 
 Fence creation, editing, and deletion; corrections; bind/unbind; account changes; arbitrary collar behavior; and other private write endpoints remain intentionally unsupported. Treat every Home Assistant control as a supplemental convenience, not a containment authority. Confirm safety-critical state in the official Halo app and physically verify your pet is safe.
 

@@ -4,7 +4,7 @@ This checklist is for maintainers.
 
 ## Prepare
 
-1. Update the `X.Y.Z` versions in `custom_components/halo_collar/manifest.json` and `pyproject.toml`.
+1. Update the `X.Y.Z` versions in `custom_components/halo_collar/manifest.json` and `pyproject.toml`. Run `uv lock` to refresh the project version in `uv.lock`, then review the lockfile diff.
 2. Confirm the planned Git tag and release use `vX.Y.Z`.
 3. Review README, support, security, and compatibility guidance.
 4. Run:
@@ -23,6 +23,8 @@ This checklist is for maintainers.
    ```
 
 5. Confirm the GitHub `Lint` and `Validate` workflows pass for the exact release commit.
+
+The isolated test command above uses the pinned Home Assistant contract described in [Contributing](../CONTRIBUTING.md#pinned-home-assistant-contract). Artifact validation checks package contents and integrity. It does not replace the manual privacy review below.
 
 ## Brand assets
 

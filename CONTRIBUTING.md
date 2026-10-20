@@ -11,6 +11,8 @@ Thanks for helping improve this unofficial Home Assistant integration. Bug fixes
 
 ## Development setup
 
+### Portable tests
+
 Install [uv](https://docs.astral.sh/uv/) and run:
 
 ```bash
@@ -21,10 +23,17 @@ uv run ruff format --check .
 python -m compileall custom_components tests
 ```
 
-Run the full Home Assistant 2026.10.2 contract separately so its large,
-Home Assistant-pinned dependency graph does not enter the project lockfile.
-The isolated requirements pin `pytest-homeassistant-custom-component==0.13.373`
-and the test-only form-schema dependency `voluptuous-serialize==2.7.0`:
+The portable suite tests the API client, guarded control transactions, cooldowns,
+provider-payload normalization, and telemetry extractors without a live Halo account.
+Tests that require Home Assistant skip when it is absent.
+
+### Pinned Home Assistant contract
+
+Run the full Home Assistant 2026.10.2 contract separately so its dependency graph
+stays out of the project lockfile. This target advances when maintainers update
+`requirements_test_ha_stable.txt`, not whenever Home Assistant releases a version.
+The requirements pin `pytest-homeassistant-custom-component==0.13.373` and
+`voluptuous-serialize==2.7.0`:
 
 ```bash
 uv run --isolated --python 3.14.2 \
@@ -32,7 +41,15 @@ uv run --isolated --python 3.14.2 \
   pytest -q
 ```
 
-Run the minimum Home Assistant compatibility and write-transport tests separately:
+This lane verifies setup and failure behavior, every platform, configuration and
+options flows, control lifecycle, token persistence, and lock identity across real
+unload and reload operations. Reauthentication coverage includes changed and
+identical credentials, abort before reload dispatch, overlapping setup requests,
+and entries without a runtime.
+
+### Minimum Home Assistant compatibility
+
+Run the Home Assistant 2024.12.0 compatibility and write-transport tests separately:
 
 ```bash
 uv run --isolated --python 3.12.7 \
@@ -42,7 +59,18 @@ uv run --isolated --python 3.12.7 \
   tests/test_tracker_compat.py tests/test_api_transport.py
 ```
 
-Unit tests exercise the API client, authentication/configuration/reauth/options flows, guarded fence and Find collar transactions, cooldown/dispatch-boundary behavior, provider-payload normalization, and telemetry extractors without requiring a live Halo account. On Python 3.14.2+, the pinned `pytest-homeassistant-custom-component` harness verifies config-entry setup/failure behavior, every platform, option-driven control lifecycle, token persistence, and lock identity across real unload/reload operations. Reauth tests cover changed and identical credentials, successful abort before reload dispatch, requests overlapping setup, and entries without a runtime. A separate isolated compatibility lane loads Home Assistant 2024.12.0 on Python 3.12.7 and verifies tracker import, indoor-home behavior, and options-flow startup. Its reauth checks call the installed ConfigFlow methods and Home Assistant task scheduler with synthetic entry, storage, login, and reload boundaries. Worker-cleanup tests also use synthetic configuration-entry boundaries. GitHub Actions also exercise the portable unit suite across the supported development matrix; Hassfest, HACS validation, release-artifact integrity, and Ruff run as separate jobs.
+This lane verifies tracker import, indoor Home state, and options-flow startup.
+Reauthentication checks call installed ConfigFlow methods and the Home Assistant
+task scheduler with synthetic entry, storage, login, and reload boundaries.
+Worker-cleanup tests also use synthetic config-entry boundaries.
+
+### Coverage limits
+
+These tests use synthetic provider data. They do not validate live Halo behavior,
+physical command execution, or containment. GitHub Actions runs the portable suite
+on Python 3.11, 3.13, and 3.14. Hassfest, HACS validation, release-artifact integrity,
+and Ruff run as separate jobs. See [the workflow](.github/workflows/lint.yml) for
+exact test-lane commands.
 
 ## Testing in Home Assistant
 
