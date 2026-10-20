@@ -92,7 +92,20 @@ def test_reported_activity_translation_state_keys_match_options():
     [(0, 0), (3, 3), (2.0, 2), ("4", 4), (" 5 ", 5)]
     + [
         (value, None)
-        for value in (None, True, False, -1, 1.5, "1.0", "bad", [], {}, float("nan"), float("inf"))
+        for value in (
+            None,
+            True,
+            False,
+            -1,
+            1.5,
+            "1.0",
+            "bad",
+            "9" * 5000,
+            [],
+            {},
+            float("nan"),
+            float("inf"),
+        )
     ],
 )
 def test_walk_feedback_count_normalizes_without_changing_newest_selection(raw, expected):

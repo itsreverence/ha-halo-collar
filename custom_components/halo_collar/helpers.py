@@ -238,7 +238,6 @@ def pet_safety_status(pet: dict[str, Any] | None) -> Any:
 
 
 def pet_reported_activity(pet: dict[str, Any] | None) -> str | None:
-    """Return the pet's reported activity classification for a known integer code."""
     raw = nested(pet or {}, "telemetry", "activityType")
     return _PET_ACTIVITY_OPTIONS_BY_CODE.get(raw) if type(raw) is int else None
 
@@ -440,7 +439,10 @@ def non_negative_integer(value: Any) -> int | None:
     if isinstance(value, str):
         normalized = value.strip()
         if normalized.isdecimal():
-            return int(normalized)
+            try:
+                return int(normalized)
+            except ValueError:
+                return None
     return None
 
 
