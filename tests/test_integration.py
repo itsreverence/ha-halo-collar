@@ -1101,6 +1101,69 @@ async def real_client_entry(hass, aioclient_mock):
     return entry
 
 
+@pytest.mark.parametrize("same_credentials", [False, True], ids=["different", "identical"])
+async def test_successful_reauth_reloads_once_without_listener_warning(
+    hass, real_client_entry, aioclient_mock, monkeypatch, caplog, same_credentials
+):
+    entry = real_client_entry
+    hass.config_entries.async_update_entry(
+        entry, data={**entry.data, CONF_EMAIL: "owner@example.com"}
+    )
+    await hass.async_block_till_done()
+    original = dict(entry.data)
+    old_client = hass.data[DOMAIN][entry.entry_id]["client"]
+    now = original[CONF_EXPIRES_AT] - 600
+    monkeypatch.setattr(halo_api, "time", SimpleNamespace(time=lambda: now))
+    expected = {
+        CONF_ACCESS_TOKEN: original[CONF_ACCESS_TOKEN] if same_credentials else "reauth-access",
+        CONF_REFRESH_TOKEN: original[CONF_REFRESH_TOKEN] if same_credentials else "reauth-refresh",
+        CONF_EXPIRES_AT: original[CONF_EXPIRES_AT] if same_credentials else now + 7140,
+    }
+    aioclient_mock.post(
+        f"{DEFAULT_AUTH_BASE}/connect/token",
+        json={
+            "access_token": expected[CONF_ACCESS_TOKEN],
+            "refresh_token": expected[CONF_REFRESH_TOKEN],
+            "expires_in": 660 if same_credentials else 7200,
+        },
+    )
+    states = []
+    remove_listener = entry.async_on_state_change(lambda: states.append(entry.state))
+    caplog.clear()
+    try:
+        with patch.object(
+            hass.config_entries, "async_reload", wraps=hass.config_entries.async_reload
+        ) as reload_spy:
+            flow = await hass.config_entries.flow.async_init(
+                DOMAIN,
+                context={"source": SOURCE_REAUTH, "entry_id": entry.entry_id},
+                data=entry.data,
+            )
+            assert flow["type"] is FlowResultType.FORM
+            result = await hass.config_entries.flow.async_configure(
+                flow["flow_id"],
+                {CONF_EMAIL: "owner@example.com", CONF_PASSWORD: "synthetic-password"},
+            )
+            await hass.async_block_till_done()
+        assert result["type"] is FlowResultType.ABORT
+        assert result["reason"] == "reauth_successful"
+        reload_spy.assert_awaited_once_with(entry.entry_id)
+        assert states.count(ConfigEntryState.LOADED) == 1
+        assert entry.state is ConfigEntryState.LOADED
+        client = hass.data[DOMAIN][entry.entry_id]["client"]
+        assert client is not old_client
+        assert {key: client.token_snapshot[key] for key in expected} == expected
+        assert dict(entry.data) == {**original, **expected}
+        assert not [
+            record.getMessage()
+            for record in caplog.records
+            if "has an update listener and should use it for scheduling a reload"
+            in record.getMessage()
+        ]
+    finally:
+        remove_listener()
+
+
 async def test_optional_clock_failure_keeps_telemetry_available_and_diagnostics_network_free(
     hass, real_client_entry, aioclient_mock
 ):
