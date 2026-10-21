@@ -48,7 +48,7 @@ History is optional enrichment, not live tracking. Unknown can mean no valid mat
 
 ### Last reported activity
 
-The sensor reads only `pet.telemetry.activityType` through the existing exact pet relationship. Known integer codes map to stable translated enum states. Missing, malformed, zero, and unknown codes produce unknown. Booleans, floats, and strings are rejected. Cached known classifications remain visible when collar reports age. A failed required refresh makes telemetry unavailable. No extra requests or timers are added.
+The sensor reads only `pet.telemetry.activityType` through the existing exact pet relationship. Known integer codes map to stable translated enum states. Missing, malformed, zero, and unknown codes produce unknown. Booleans, floats, and strings are rejected. The sensor reports unknown whenever the Connectivity rule finds the collar report older than the configured report age limit, and recovers on the next fresh report. A failed required refresh makes telemetry unavailable. No extra requests or timers are added.
 
 The code map comes from the Halo app. A live cloud response confirmed the field path, its integer type, and the resting code. The other codes are not yet observed live.
 

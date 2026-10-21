@@ -11,7 +11,8 @@ from homeassistant.components.binary_sensor import (
 )
 from homeassistant.const import EntityCategory
 
-from .const import CONF_STALE_AFTER, DEFAULT_STALE_AFTER_SECONDS, DOMAIN
+from .const import DOMAIN
+from .controls import telemetry_stale_after
 from .entity import HaloEntity
 from .helpers import (
     active_walk_paused,
@@ -27,8 +28,7 @@ from .helpers import (
 
 
 def _online(collar: dict[str, Any], _pet, entry) -> bool:
-    stale_after = entry.options.get(CONF_STALE_AFTER, DEFAULT_STALE_AFTER_SECONDS)
-    return is_online(collar, stale_after=float(stale_after))
+    return is_online(collar, stale_after=telemetry_stale_after(entry))
 
 
 @dataclass(frozen=True, kw_only=True)

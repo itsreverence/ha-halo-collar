@@ -759,6 +759,21 @@ async def test_reported_activity_translations_match_enum_options(hass):
     assert client.writes == client.finds == []
 
 
+async def test_reported_activity_is_unknown_while_connectivity_is_off(hass):
+    state = _state()
+    state.pets[0]["telemetry"]["activityType"] = 2
+    state.collars[0]["telemetry"]["manifest"]["timestamp"] = "2020-01-01T00:00:00Z"
+    client = FakeHaloClient(state)
+    entry = _entry({CONF_ENABLE_FENCE_CONTROLS: False})
+    entry.add_to_hass(hass)
+    await _setup(hass, entry, client)
+    assert _state_for_unique_id(hass, "binary_sensor", "collar-1_online").state == "off"
+    assert _state_for_unique_id(hass, "sensor", "collar-1_last_reported_activity").state == (
+        STATE_UNKNOWN
+    )
+    assert _state_for_unique_id(hass, "sensor", "collar-1_battery").state == "90"
+
+
 async def test_runtime_walk_sensors_are_safe_and_update_after_refresh(hass):
     walks = [
         {
