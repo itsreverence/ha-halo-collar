@@ -140,6 +140,7 @@ SENSORS = (
         key="safety_status",
         translation_key="safety_status",
         value_fn=lambda _c, pet: _pet_safety_status(pet),
+        fresh_only=True,
     ),
     HaloSensorDescription(
         key="firmware",
@@ -159,6 +160,7 @@ SENSORS = (
         native_unit_of_measurement=UnitOfTime.SECONDS,
         state_class=SensorStateClass.MEASUREMENT,
         value_fn=lambda c, p: _active_walk_duration(p, c),
+        fresh_only=True,
     ),
     HaloSensorDescription(
         key="active_walk_distance",
@@ -168,6 +170,7 @@ SENSORS = (
         state_class=SensorStateClass.MEASUREMENT,
         suggested_display_precision=1,
         value_fn=lambda c, p: _active_walk_distance(p, c),
+        fresh_only=True,
     ),
     HaloSensorDescription(
         key="last_reported_activity",
@@ -224,6 +227,7 @@ SENSORS = (
         key="current_fence",
         translation_key="current_fence",
         value_fn=lambda _c, p: _current_fence_name(p),
+        fresh_only=True,
     ),
     HaloSensorDescription(
         key="fence_configuration",

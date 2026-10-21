@@ -38,6 +38,8 @@ class HaloBinarySensorDescription(BinarySensorEntityDescription):
     attributes_fn: (
         Callable[[dict[str, Any], dict[str, Any] | None, Any], dict[str, Any] | None] | None
     ) = None
+    # Report unknown whenever Connectivity is off, for values that only describe the present.
+    fresh_only: bool = False
 
 
 BINARY_SENSORS = (
@@ -52,6 +54,7 @@ BINARY_SENSORS = (
         translation_key="fence_breach",
         device_class=BinarySensorDeviceClass.SAFETY,
         value_fn=lambda c, _pet, _entry: c.get("telemetry", {}).get("fenceBreach") is not None,
+        fresh_only=True,
     ),
     HaloBinarySensorDescription(
         key="gps_calibration_required",
@@ -88,11 +91,13 @@ BINARY_SENSORS = (
         key="active_walk",
         translation_key="active_walk",
         value_fn=lambda c, p, _entry: active_walk_state(p, c),
+        fresh_only=True,
     ),
     HaloBinarySensorDescription(
         key="active_walk_paused",
         translation_key="active_walk_paused",
         value_fn=lambda c, p, _entry: active_walk_paused(p, c),
+        fresh_only=True,
     ),
     HaloBinarySensorDescription(
         key="collar_reporting_issue",
@@ -146,6 +151,8 @@ class HaloBinarySensor(HaloEntity, BinarySensorEntity):
     def is_on(self) -> bool | None:
         collar = self.collar
         if collar is None:
+            return None
+        if self.entity_description.fresh_only and not _online(collar, self.pet, self._entry):
             return None
         return self.entity_description.value_fn(collar, self.pet, self._entry)
 

@@ -759,18 +759,29 @@ async def test_reported_activity_translations_match_enum_options(hass):
     assert client.writes == client.finds == []
 
 
-async def test_reported_activity_is_unknown_while_connectivity_is_off(hass):
+async def test_present_tense_telemetry_is_unknown_while_connectivity_is_off(hass):
     state = _state()
     state.pets[0]["telemetry"]["activityType"] = 2
+    walk = {"durationFromStartInSeconds": 120, "walkedDistance": 250, "isPaused": True}
+    state.collars[0]["telemetry"].update({"walk": walk, "fenceBreach": {}})
+    state.pets[0]["collarInfo"].setdefault("telemetry", {})["walk"] = walk
     state.collars[0]["telemetry"]["manifest"]["timestamp"] = "2020-01-01T00:00:00Z"
     client = FakeHaloClient(state)
     entry = _entry({CONF_ENABLE_FENCE_CONTROLS: False})
     entry.add_to_hass(hass)
     await _setup(hass, entry, client)
     assert _state_for_unique_id(hass, "binary_sensor", "collar-1_online").state == "off"
-    assert _state_for_unique_id(hass, "sensor", "collar-1_last_reported_activity").state == (
-        STATE_UNKNOWN
-    )
+    for platform, key in (
+        ("sensor", "last_reported_activity"),
+        ("sensor", "safety_status"),
+        ("sensor", "current_fence"),
+        ("sensor", "active_walk_duration"),
+        ("sensor", "active_walk_distance"),
+        ("binary_sensor", "active_walk"),
+        ("binary_sensor", "active_walk_paused"),
+        ("binary_sensor", "fence_breach"),
+    ):
+        assert _state_for_unique_id(hass, platform, f"collar-1_{key}").state == STATE_UNKNOWN, key
     assert _state_for_unique_id(hass, "sensor", "collar-1_battery").state == "90"
 
 
