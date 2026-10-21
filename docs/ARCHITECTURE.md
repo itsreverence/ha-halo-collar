@@ -147,7 +147,7 @@ same entity IDs.
 ## Privacy boundary
 
 Config-entry diagnostics recursively redact generic provider IDs, names,
-serials, hardware UUIDs, reporting-collar and current-fence IDs, coordinates, credentials, and account fields. Stable collar IDs and
+serials, hardware UUIDs, reporting-collar and current-fence IDs, signed pet icon and report URLs, coordinates, credentials, and account fields. Stable collar IDs and
 the local display name remain in Home Assistant's private device/entity
 registries because they provide durable identity and usable household labels;
 those local registries and backups must be protected as household data and are
