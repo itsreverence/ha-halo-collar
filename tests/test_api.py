@@ -1584,6 +1584,7 @@ async def test_fetch_state_stores_only_walk_results_after_core_state_validation(
                     "id": "pet-1",
                     "walkedDurationInSeconds": 300,
                     "walkedDistanceInMeters": "125.5",
+                    "feedbacksCount": 0,
                 },
                 {"id": "pet-2"},
                 {"id": "pet-3"},
@@ -1620,6 +1621,7 @@ async def test_fetch_state_stores_only_walk_results_after_core_state_validation(
                 "id",
                 "walkedDurationInSeconds",
                 "walkedDistanceInMeters",
+                "feedbacksCount",
             }
             for item in value.values():
                 assert_allowlisted_walk(item)
@@ -1643,7 +1645,7 @@ async def test_fetch_state_preserves_activity_without_extra_requests():
     )
     state = await _new_client(session).async_fetch_state()
     assert state.pets[0]["telemetry"]["activityType"] == 1
-    assert state.walks == [{"pets": [{"id": "pet-1"}]}]
+    assert state.walks == [{"pets": [{"id": "pet-1", "feedbacksCount": 2}]}]
     assert [url for url, _headers in session.gets] == [
         f"https://api.example{path}"
         for path in (

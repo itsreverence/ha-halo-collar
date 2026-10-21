@@ -932,7 +932,7 @@ async def test_runtime_walk_sensors_are_safe_and_update_after_refresh(hass):
     assert _state_for_unique_id(hass, "sensor", f"{collar_id}_last_walk_distance").state == "50.0"
 
 
-async def test_diagnostics_omits_walk_history_and_private_walk_sentinels(hass):
+async def test_diagnostics_walk_history_keeps_only_scalar_pet_metrics(hass):
     walks = [
         {
             "id": "PRIVATE_WALK_ID",
@@ -941,7 +941,17 @@ async def test_diagnostics_omits_walk_history_and_private_walk_sentinels(hass):
             "routeImageUrl": "https://private.invalid/route.png",
             "user": {"id": "PRIVATE_USER_ID"},
             "feedback": {"correction": "PRIVATE_FEEDBACK_SENTINEL"},
-            "pets": [{"id": "pet-1", "nested": {"route": "PRIVATE_NESTED_SENTINEL"}}],
+            "startedAt": "2026-07-06T11:00:00Z",
+            "pets": [
+                {
+                    "id": "pet-1",
+                    "walkedDurationInSeconds": 420,
+                    "walkedDistanceInMeters": 125.5,
+                    "feedbacksCount": 3,
+                    "feedbacks": [{"type": "PRIVATE_FEEDBACK_SENTINEL"}],
+                    "nested": {"route": "PRIVATE_NESTED_SENTINEL"},
+                }
+            ],
         }
     ]
     client = FakeHaloClient(_state(walks=walks))
@@ -952,16 +962,18 @@ async def test_diagnostics_omits_walk_history_and_private_walk_sentinels(hass):
     diagnostics = await async_get_config_entry_diagnostics(hass, entry)
     serialized = json.dumps(diagnostics, default=str).lower()
 
-    def assert_no_walks_key(value):
-        if isinstance(value, dict):
-            assert "walks" not in value
-            for item in value.values():
-                assert_no_walks_key(item)
-        elif isinstance(value, list):
-            for item in value:
-                assert_no_walks_key(item)
-
-    assert_no_walks_key(diagnostics)
+    assert diagnostics["walk_history"] == [
+        {
+            "pets": [
+                {
+                    "walkedDurationInSeconds": 420,
+                    "walkedDistanceInMeters": 125.5,
+                    "feedbacksCount": 3,
+                }
+            ]
+        }
+    ]
+    assert "2026-07-06" not in json.dumps(diagnostics["walk_history"])
     for sentinel in (
         "private_walk_id",
         "private_location_sentinel",

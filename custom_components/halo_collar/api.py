@@ -64,7 +64,7 @@ def _sanitize_walk_record(raw_walk: dict[str, Any]) -> dict[str, Any]:
             pet: dict[str, Any] = {}
             if isinstance(pet_id := raw_pet.get("id"), str):
                 pet["id"] = pet_id
-            for key in ("walkedDurationInSeconds", "walkedDistanceInMeters"):
+            for key in ("walkedDurationInSeconds", "walkedDistanceInMeters", "feedbacksCount"):
                 if (value := _safe_walk_number_or_string(raw_pet.get(key))) is not None:
                     pet[key] = value
             pets.append(pet)
