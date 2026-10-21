@@ -22,6 +22,9 @@ TOKEN_REFRESH_SKEW_SECONDS = 60
 REQUEST_TIMEOUT_SECONDS = 30
 OPTIONAL_SERVER_TIME_TIMEOUT_SECONDS = 5
 OPTIONAL_WALK_HISTORY_TIMEOUT_SECONDS = 5
+# The Halo app's own walk-history page size. A wider window keeps one dog's walks from
+# crowding another dog out on multi-dog accounts, in a single request per poll.
+WALK_HISTORY_PAGE_SIZE = 30
 # Halo rejects API calls from app versions below its server-enforced Android floor.
 # Keep this aligned with a publicly released official Android app version.
 HALO_ANDROID_CLIENT_VERSION = "2.13.0"
@@ -242,7 +245,9 @@ class HaloApiClient:
         walks: list[dict[str, Any]] = []
         try:
             async with asyncio.timeout(OPTIONAL_WALK_HISTORY_TIMEOUT_SECONDS):
-                walk_history = await self.async_get("/walk/my?page=1&pageSize=10")
+                walk_history = await self.async_get(
+                    f"/walk/my?page=1&pageSize={WALK_HISTORY_PAGE_SIZE}"
+                )
         except HaloAuthError:
             raise
         except (TimeoutError, HaloApiError):
@@ -251,7 +256,7 @@ class HaloApiClient:
             if isinstance(walk_history, dict) and isinstance(walk_history.get("results"), list):
                 walks = [
                     _sanitize_walk_record(walk)
-                    for walk in walk_history["results"][:10]
+                    for walk in walk_history["results"][:WALK_HISTORY_PAGE_SIZE]
                     if isinstance(walk, dict)
                 ]
         return HaloState(

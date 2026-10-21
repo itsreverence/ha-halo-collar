@@ -16,7 +16,7 @@
 | Values stop changing but remain available | Check **Last telemetry** and compare with the official Halo app. A successful cloud poll can return old report data. Reducing **Update interval** does not request a new collar report. |
 | **Connectivity** is off | The report timestamp is old, missing, invalid, or too far in the future. Check **Last telemetry** and the official app. Connectivity reflects report age at the next state update, not a live connection test. |
 | One sensor is **unknown** | Halo may omit that optional value or return an invalid value. Check related telemetry. Unknown does not mean safe, off, or zero. |
-| Recent-walk sensors are **unknown** | No valid matching completed walk may exist in the first ten records returned by Halo, or the optional history request failed or timed out. This does not prove that no historical walk exists. |
+| Recent-walk sensors are **unknown** | No valid matching completed walk may exist in the 30 most recent records returned by Halo, or the optional history request failed or timed out. This does not prove that no historical walk exists. |
 | Telemetry entities are **unavailable** | Check the integration's setup, authentication, or refresh error. Required refresh failures make telemetry unavailable until a successful refresh. A removed collar also becomes unavailable. Advisory control-status sensors remain readable. Reauthenticate only when prompted. |
 | The tracker reports `home` but its map position differs | Halo's indoor and Wi-Fi indicators override the Home state. The integration does not verify the network or physical home location and keeps Halo's coordinates. Compare with the official app. |
 

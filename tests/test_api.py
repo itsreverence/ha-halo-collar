@@ -74,7 +74,7 @@ class FakeSession:
             return FakeResponse(200, {"accessLevel": "basic"})
         if url.endswith("/system/server-date-time"):
             return FakeResponse(200, "2026-07-06T00:32:03Z")
-        if url.endswith("/walk/my?page=1&pageSize=10"):
+        if url.endswith("/walk/my?page=1&pageSize=30"):
             return FakeResponse(200, {"results": []})
         return FakeResponse(404, {})
 
@@ -414,7 +414,7 @@ async def test_refreshes_expired_token_and_fetches_state():
     assert session.posts[0][1]["grant_type"] == "refresh_token"
     assert session.gets[0][1]["Authorization"] == "Bearer new-access"
     assert [url for url, _headers in session.gets].count(
-        "https://api.example/walk/my?page=1&pageSize=10"
+        "https://api.example/walk/my?page=1&pageSize=30"
     ) == 1
     assert client.token_snapshot["refresh_token"] == "new-refresh"
     assert client.token_snapshot["expires_at"] > time.time()
@@ -1592,7 +1592,7 @@ async def test_fetch_state_stores_only_walk_results_after_core_state_validation(
     ]
     json.dumps(state.walks, allow_nan=False)
     assert [url for url, _headers in session.gets][-1] == (
-        "https://api.example/walk/my?page=1&pageSize=10"
+        "https://api.example/walk/my?page=1&pageSize=30"
     )
     serialized_walks = str(state.walks).lower()
     for sentinel in (
@@ -1651,25 +1651,19 @@ async def test_fetch_state_preserves_activity_without_extra_requests():
             "/collar/my",
             "/subscription/my",
             "/system/server-date-time",
-            "/walk/my?page=1&pageSize=10",
+            "/walk/my?page=1&pageSize=30",
         )
     ]
     assert session.puts == []
 
 
 @pytest.mark.asyncio
-async def test_fetch_state_keeps_only_first_ten_raw_walk_results():
-    first_ten_results = [
-        {"id": "walk-0", "endedAt": "2026-07-06T10:00:00Z"},
-        {"id": "walk-1", "endedAt": "2026-07-06T10:01:00Z"},
-        {"id": "walk-2", "endedAt": "2026-07-06T10:02:00Z"},
-        {"id": "walk-3", "endedAt": "2026-07-06T10:03:00Z"},
-        "not-an-object",
-        {"id": "walk-5", "endedAt": "2026-07-06T10:05:00Z"},
-        {"id": "walk-6", "endedAt": "2026-07-06T10:06:00Z"},
-        {"id": "walk-7", "endedAt": "2026-07-06T10:07:00Z"},
-        {"id": "walk-8", "endedAt": "2026-07-06T10:08:00Z"},
-        {"id": "walk-9", "endedAt": "2026-07-06T10:09:00Z"},
+async def test_fetch_state_keeps_only_first_thirty_raw_walk_results():
+    first_thirty_results = [
+        "not-an-object"
+        if index == 4
+        else {"id": f"walk-{index}", "endedAt": f"2026-07-06T10:{index:02d}:00Z"}
+        for index in range(30)
     ]
     beyond_boundary = {
         "id": "PRIVATE_NEWER_WALK_SENTINEL",
@@ -1682,7 +1676,7 @@ async def test_fetch_state_keeps_only_first_ten_raw_walk_results():
             FakeResponse(200, [{"id": "collar-1"}]),
             FakeResponse(200, {}),
             FakeResponse(200, "2026-07-06T00:32:03Z"),
-            FakeResponse(200, {"results": [*first_ten_results, beyond_boundary]}),
+            FakeResponse(200, {"results": [*first_thirty_results, beyond_boundary]}),
         ]
     )
     client = _new_client(session)
@@ -1690,9 +1684,9 @@ async def test_fetch_state_keeps_only_first_ten_raw_walk_results():
     state = await client.async_fetch_state()
 
     assert [walk.get("endedAt") for walk in state.walks] == [
-        walk["endedAt"] for walk in first_ten_results if isinstance(walk, dict)
+        walk["endedAt"] for walk in first_thirty_results if isinstance(walk, dict)
     ]
-    assert len(state.walks) == 9
+    assert len(state.walks) == 29
     assert beyond_boundary not in state.walks
     assert "2026-07-06T12:00:00Z" not in [walk.get("endedAt") for walk in state.walks]
     assert "PRIVATE_NEWER_WALK_SENTINEL" not in str(state.walks)
@@ -1813,7 +1807,7 @@ async def test_server_time_transient_failure_preserves_core_state_and_walks(monk
     async def get_with_unavailable_server_time(path):
         if path == "/system/server-date-time":
             raise HaloApiError("temporary diagnostic outage")
-        if path == "/walk/my?page=1&pageSize=10":
+        if path == "/walk/my?page=1&pageSize=30":
             return {"results": [{"endedAt": "2026-07-06T10:30:00Z"}]}
         return await original_get(path)
 
@@ -1851,7 +1845,7 @@ async def test_required_core_fetch_failure_propagates(monkeypatch, path):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("path", ["/system/server-date-time", "/walk/my?page=1&pageSize=10"])
+@pytest.mark.parametrize("path", ["/system/server-date-time", "/walk/my?page=1&pageSize=30"])
 @pytest.mark.parametrize("error_type", [HaloAuthError, asyncio.CancelledError, RuntimeError])
 async def test_optional_fetch_auth_failure_and_cancellation_propagate(
     monkeypatch, path, error_type

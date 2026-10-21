@@ -21,7 +21,7 @@ The integration is **telemetry-only by default**. Each collar has:
 - Battery, connectivity, location, fence, calibration, firmware, and diagnostic-status sensors, plus a **Fence breach event** for automations.
 - Provider daily/current-period activity metrics and cloud-polled active-walk duration and distance.
 - **Last reported activity** shows Halo's cached classification, such as walking or resting. A successful poll does not prove a fresh classification. Check **Last telemetry** and **Connectivity** for collar report age.
-- Recent-walk sensors for the newest matching completed walk in the first ten records returned by Halo. These are supplemental history, not live tracking. Unknown can mean no valid match in that window or an optional history request failure.
+- Recent-walk sensors for the newest matching completed walk in the 30 most recent records returned by Halo. These are supplemental history, not live tracking. Unknown can mean no valid match in that window or an optional history request failure.
 
 The activity labels come from the Halo app. A live response confirmed the field and the resting label. The other labels have not been observed live yet.
 
