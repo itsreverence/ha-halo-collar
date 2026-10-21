@@ -13,6 +13,14 @@ A Home Assistant custom integration for [Halo Collar](https://www.halocollar.com
 > [!IMPORTANT]
 > This is an **unofficial** integration. It is not affiliated with, endorsed by, or supported by Halo Collar / Protect Animals With Satellites, LLC. It talks to Halo's private mobile/cloud API, which may change or break at any time. Use at your own risk.
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/dashboard-card-dark.png">
+    <img src="docs/assets/screenshots/dashboard-card-light.png" alt="Home Assistant entities card for a collar showing location, safety status, current fence, last reported activity, battery, connectivity, last collar report, walks today, activity today, and latest walk" width="460">
+  </picture>
+</p>
+<p align="center"><sub>An example dashboard card built from this integration's entities, using synthetic demo data.</sub></p>
+
 ## Entities
 
 The integration is **telemetry-only by default**. Each collar has:
