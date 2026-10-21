@@ -44,7 +44,7 @@ The Find status sensor owns one local expiry timer, independently of the button.
 
 The integration requests `/walk/my?page=1&pageSize=10` and retains at most ten returned records. It selects the newest matching completed walk by valid `endedAt`, then exposes end time, duration, distance, and locally derived average speed. The request has no completed-only filter and the integration does not guarantee provider ordering.
 
-History is optional enrichment, not live tracking. Unknown can mean no valid matching record in that window or an optional history timeout or error. It does not prove that no historical walk exists. Recent-walk entities never expose route, location, user, walk-ID, feedback, or correction fields.
+History is optional enrichment, not live tracking. Unknown can mean no valid matching record in that window or an optional history timeout or error. It does not prove that no historical walk exists. Recent-walk entities never expose route, location, user, walk-ID, feedback, or correction fields. The sanitized records also keep the scalar `feedbacksCount`, which no entity uses yet. Diagnostics include only each dog's duration, distance, and feedback count per record, without IDs, timestamps, or routes, so these fields can be checked against live data.
 
 ### Last reported activity
 
