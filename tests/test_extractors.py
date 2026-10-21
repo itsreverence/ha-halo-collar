@@ -33,6 +33,7 @@ from custom_components.halo_collar.helpers import (
     pet_for_collar,
     pet_reported_activity,
     pet_safety_status,
+    pretty_status,
     redact,
     reported_activity_options,
     reporting_issue,
@@ -761,6 +762,27 @@ def test_redact_masks_nested_reporting_collar_id_but_keeps_report_time():
     manifest = redact(payload)["telemetry"]["manifest"]
 
     assert manifest == {"reportingCollarId": REDACTED, "timestamp": "2026-07-06T11:00:00Z"}
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("fencesoff", "Fences off"),
+        ("leavingfence", "Leaving fence"),
+        ("connectednosignal", "Connected, no signal"),
+        ("unconnected", "Not connected"),
+        ("ipconfigdone", "Connecting"),
+        ("weakgps", "Weak GPS"),
+        ("chargingdone", "Charged"),
+        ("chargingfailed", "Charging failed"),
+        ("outdated", "Outdated"),
+        ("notapplied", "Not applied"),
+        ("FencesOff", "Fences off"),
+        ("some_new_value", "Some New Value"),
+    ],
+)
+def test_pretty_status_labels_halo_status_values(raw, expected):
+    assert pretty_status(raw) == expected
 
 
 def test_redact_masks_signed_icon_and_report_urls_that_embed_pet_ids():
