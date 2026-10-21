@@ -45,6 +45,7 @@ else:
 
 class HaloPetTracker(_IndoorHomeTrackerMixin, HaloEntity, TrackerEntity):
     _attr_name = None
+    _attr_icon = "mdi:dog"
 
     def __init__(self, coordinator, entry, collar) -> None:
         super().__init__(coordinator, entry, collar)

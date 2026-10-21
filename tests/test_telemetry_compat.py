@@ -98,7 +98,7 @@ async def test_reported_activity_and_every_walk_sensor_write_and_refresh_real_ha
         assert written(activity).attributes["options"] == reported_activity_options()
         expected = {
             "last_walk": "2026-07-06T11:10:00+00:00",
-            "last_walk_duration": "600",
+            "last_walk_duration": "10.0",
             "last_walk_distance": "1200.0",
             "last_walk_average_speed": "2.0",
         }
@@ -123,7 +123,7 @@ async def test_reported_activity_and_every_walk_sensor_write_and_refresh_real_ha
         manifest["timestamp"] = "2020-01-01T00:00:00Z"
         await refresh()
         assert written(activity).state == "unknown"
-        assert written(walk_sensors["last_walk_duration"]).state == "600"
+        assert written(walk_sensors["last_walk_duration"]).state == "10.0"
         manifest["timestamp"] = fresh_timestamp
         await refresh()
         assert written(activity).state == "running"
@@ -139,7 +139,7 @@ async def test_reported_activity_and_every_walk_sensor_write_and_refresh_real_ha
         state.pets[0]["telemetry"] = {}
         await refresh()
         assert written(activity).state == "unknown"
-        assert written(walk_sensors["last_walk_duration"]).state == "600"
+        assert written(walk_sensors["last_walk_duration"]).state == "10.0"
 
         state.pets[0]["telemetry"]["activityType"] = 1
         valid_state = deepcopy(state)
