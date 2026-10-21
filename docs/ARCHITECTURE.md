@@ -50,7 +50,7 @@ History is optional enrichment, not live tracking. Unknown can mean no valid mat
 
 The sensor reads only `pet.telemetry.activityType` through the existing exact pet relationship. Known integer codes map to stable translated enum states. Missing, malformed, zero, and unknown codes produce unknown. Booleans, floats, and strings are rejected. The sensor reports unknown whenever the Connectivity rule finds the collar report older than the configured report age limit, and recovers on the next fresh report. A failed required refresh makes telemetry unavailable. No extra requests or timers are added.
 
-The code map comes from the Halo app. A live cloud response confirmed the field path, its integer type, and the resting code. The other codes are not yet observed live.
+The code map comes from the Halo app. A live cloud response confirmed the field path and its integer type. The meaning of each code has not been checked against observed behavior.
 
 ## Authentication
 
@@ -147,7 +147,7 @@ same entity IDs.
 ## Privacy boundary
 
 Config-entry diagnostics recursively redact generic provider IDs, names,
-serials, hardware UUIDs, coordinates, credentials, and account fields. Stable collar IDs and
+serials, hardware UUIDs, reporting-collar and current-fence IDs, coordinates, credentials, and account fields. Stable collar IDs and
 the local display name remain in Home Assistant's private device/entity
 registries because they provide durable identity and usable household labels;
 those local registries and backups must be protected as household data and are
