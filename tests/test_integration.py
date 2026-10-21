@@ -967,6 +967,7 @@ async def test_diagnostics_walk_history_keeps_only_scalar_pet_metrics(hass):
     diagnostics = await async_get_config_entry_diagnostics(hass, entry)
     serialized = json.dumps(diagnostics, default=str).lower()
 
+    assert diagnostics["walk_history_status"] == "ok"
     assert diagnostics["walk_history"] == [
         {
             "pets": [

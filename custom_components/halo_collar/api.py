@@ -174,6 +174,8 @@ class HaloState:
     subscription: dict[str, Any]
     server_time: str | None = None
     walks: list[dict[str, Any]] = field(default_factory=list)
+    # "ok", "unavailable" (timeout or error), or "unexpected_response" (unrecognized shape).
+    walk_history_status: str = "ok"
 
 
 class HaloApiClient:
@@ -243,6 +245,7 @@ class HaloApiClient:
             _LOGGER.warning("Halo server time was unavailable; continuing without server time")
 
         walks: list[dict[str, Any]] = []
+        walk_history_status = "ok"
         try:
             async with asyncio.timeout(OPTIONAL_WALK_HISTORY_TIMEOUT_SECONDS):
                 walk_history = await self.async_get(
@@ -252,6 +255,7 @@ class HaloApiClient:
             raise
         except (TimeoutError, HaloApiError):
             _LOGGER.warning("Halo walk history was unavailable; continuing without walk history")
+            walk_history_status = "unavailable"
         else:
             if isinstance(walk_history, dict) and isinstance(walk_history.get("results"), list):
                 walks = [
@@ -259,12 +263,15 @@ class HaloApiClient:
                     for walk in walk_history["results"][:WALK_HISTORY_PAGE_SIZE]
                     if isinstance(walk, dict)
                 ]
+            else:
+                walk_history_status = "unexpected_response"
         return HaloState(
             pets=pets,
             collars=collars,
             subscription=subscription,
             server_time=server_time if isinstance(server_time, str) else None,
             walks=walks,
+            walk_history_status=walk_history_status,
         )
 
     async def async_get_many(self, *paths: str) -> list[Any]:

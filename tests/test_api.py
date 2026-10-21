@@ -1696,10 +1696,10 @@ async def test_fetch_state_keeps_only_first_thirty_raw_walk_results():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("walk_payload", "expected_walks"),
+    ("walk_payload", "expected_walks", "expected_status"),
     [
-        ("not-an-object", []),
-        ({"results": "not-a-list"}, []),
+        ("not-an-object", [], "unexpected_response"),
+        ({"results": "not-a-list"}, [], "unexpected_response"),
         (
             {
                 "results": [
@@ -1713,10 +1713,13 @@ async def test_fetch_state_keeps_only_first_thirty_raw_walk_results():
                 {"endedAt": "2026-07-06T10:30:00Z"},
                 {"endedAt": "2026-07-06T11:30:00Z"},
             ],
+            "ok",
         ),
     ],
 )
-async def test_malformed_walk_history_payload_preserves_core_state(walk_payload, expected_walks):
+async def test_malformed_walk_history_payload_preserves_core_state(
+    walk_payload, expected_walks, expected_status
+):
     session = SequencedSession(
         [
             FakeResponse(200, [{"id": "pet-1"}]),
@@ -1735,6 +1738,7 @@ async def test_malformed_walk_history_payload_preserves_core_state(walk_payload,
     assert state.subscription == {"accessLevel": "basic"}
     assert state.server_time == "2026-07-06T00:32:03Z"
     assert state.walks == expected_walks
+    assert state.walk_history_status == expected_status
 
 
 @pytest.mark.asyncio
@@ -1754,6 +1758,7 @@ async def test_walk_history_transient_failure_does_not_hide_core_state(caplog):
 
     assert state.pets == [{"id": "pet-1"}]
     assert state.walks == []
+    assert state.walk_history_status == "unavailable"
     assert len(session.gets) == 7
     assert "walk history was unavailable" in caplog.text
 
@@ -1779,6 +1784,7 @@ async def test_walk_history_total_budget_preserves_core_state_and_releases_respo
 
     assert state.pets == [{"id": "pet-1"}]
     assert state.walks == []
+    assert state.walk_history_status == "unavailable"
     assert stalled_response.released is True
     assert "walk history was unavailable" in caplog.text
     assert "PRIVATE_WALK_SENTINEL" not in caplog.text

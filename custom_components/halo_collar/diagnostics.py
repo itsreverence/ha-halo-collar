@@ -32,5 +32,6 @@ async def async_get_config_entry_diagnostics(hass, entry) -> dict[str, Any]:
         "collars": redact(state.collars),
         "subscription": redact(state.subscription),
         "server_time": state.server_time,
+        "walk_history_status": state.walk_history_status,
         "walk_history": _walk_history_diagnostics(state.walks),
     }
