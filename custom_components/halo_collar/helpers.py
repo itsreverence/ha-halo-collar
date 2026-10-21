@@ -30,6 +30,8 @@ REDACT_KEYS = frozenset(
         "userid",
         "accountid",
         "deviceid",
+        "reportingcollarid",
+        "currentgeofenceid",
         "imei",
         "iccid",
         "ssid",

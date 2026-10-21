@@ -23,7 +23,7 @@ The integration is **telemetry-only by default**. Each collar has:
 - **Last reported activity** shows Halo's cached classification, such as walking or resting. A successful poll does not prove a fresh classification. Check **Last telemetry** and **Connectivity** for collar report age.
 - Recent-walk sensors for the newest matching completed walk in the first ten records returned by Halo. These are supplemental history, not live tracking. Unknown can mean no valid match in that window or an optional history request failure.
 
-The activity labels come from the Halo app. A live response confirmed the field and the resting label. The other labels have not been observed live yet.
+The activity labels come from the Halo app. A live response confirmed the field and its integer codes. The label meanings have not been checked against observed behavior yet.
 
 An account-level **Subscription** sensor summarizes subscription limits. Optional physical controls are described under [Options](#options). See [Architecture](docs/ARCHITECTURE.md#platforms) for detailed entity coverage.
 
