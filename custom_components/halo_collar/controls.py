@@ -29,10 +29,13 @@ class HaloControlError(Exception):
     """Raised when a guarded control cannot be executed or confirmed safely."""
 
 
+def telemetry_stale_after(entry) -> float:
+    return float(entry.options.get(CONF_STALE_AFTER, DEFAULT_STALE_AFTER_SECONDS))
+
+
 def control_stale_after(entry) -> float:
     """Never let control freshness be looser than the default telemetry threshold."""
-    configured = float(entry.options.get(CONF_STALE_AFTER, DEFAULT_STALE_AFTER_SECONDS))
-    return min(configured, float(DEFAULT_STALE_AFTER_SECONDS))
+    return min(telemetry_stale_after(entry), float(DEFAULT_STALE_AFTER_SECONDS))
 
 
 _CONTROL_LOCKS = "_control_locks"
