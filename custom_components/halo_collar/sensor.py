@@ -33,7 +33,12 @@ from .control_status import (
     enabled_control_actions,
     find_status_signal,
 )
-from .controls import control_stale_after, find_collar_cooldown_remaining, find_collar_cooldowns_for
+from .controls import (
+    control_stale_after,
+    find_collar_cooldown_remaining,
+    find_collar_cooldowns_for,
+    telemetry_stale_after,
+)
 from .entity import HaloEntity
 from .helpers import WalkSummary as _WalkSummary
 from .helpers import active_walk_distance as _active_walk_distance
@@ -45,6 +50,7 @@ from .helpers import count_value as _count_value
 from .helpers import current_fence_name as _current_fence_name
 from .helpers import fence_configuration_status as _fence_configuration_status
 from .helpers import goal_progress_attributes as _goal_progress_attributes
+from .helpers import is_online as _is_online
 from .helpers import last_telemetry as _last_telemetry
 from .helpers import latest_completed_walk as _latest_completed_walk
 from .helpers import nested as _nested
@@ -61,6 +67,8 @@ from .helpers import telemetry as _telemetry
 class HaloSensorDescription(SensorEntityDescription):
     value_fn: Callable[[dict[str, Any], dict[str, Any] | None], Any]
     attributes_fn: Callable[[dict[str, Any], dict[str, Any] | None], dict[str, Any]] | None = None
+    # Report unknown whenever Connectivity is off, for values that only describe the present.
+    fresh_only: bool = False
 
 
 SENSORS = (
@@ -132,6 +140,7 @@ SENSORS = (
         key="safety_status",
         translation_key="safety_status",
         value_fn=lambda _c, pet: _pet_safety_status(pet),
+        fresh_only=True,
     ),
     HaloSensorDescription(
         key="firmware",
@@ -151,6 +160,7 @@ SENSORS = (
         native_unit_of_measurement=UnitOfTime.SECONDS,
         state_class=SensorStateClass.MEASUREMENT,
         value_fn=lambda c, p: _active_walk_duration(p, c),
+        fresh_only=True,
     ),
     HaloSensorDescription(
         key="active_walk_distance",
@@ -160,6 +170,7 @@ SENSORS = (
         state_class=SensorStateClass.MEASUREMENT,
         suggested_display_precision=1,
         value_fn=lambda c, p: _active_walk_distance(p, c),
+        fresh_only=True,
     ),
     HaloSensorDescription(
         key="last_reported_activity",
@@ -167,6 +178,7 @@ SENSORS = (
         device_class=SensorDeviceClass.ENUM,
         options=_reported_activity_options(),
         value_fn=lambda _c, p: _pet_reported_activity(p),
+        fresh_only=True,
     ),
     HaloSensorDescription(
         key="activity_duration",
@@ -215,6 +227,7 @@ SENSORS = (
         key="current_fence",
         translation_key="current_fence",
         value_fn=lambda _c, p: _current_fence_name(p),
+        fresh_only=True,
     ),
     HaloSensorDescription(
         key="fence_configuration",
@@ -344,8 +357,12 @@ class HaloSensor(HaloEntity, SensorEntity):
     def _update_values(self) -> None:
         collar = self.collar
         attributes_fn = self.entity_description.attributes_fn
+        fresh = collar is not None and (
+            not self.entity_description.fresh_only
+            or _is_online(collar, stale_after=telemetry_stale_after(self._entry))
+        )
         self._attr_native_value = (
-            self.entity_description.value_fn(collar, self.pet) if collar is not None else None
+            self.entity_description.value_fn(collar, self.pet) if fresh else None
         )
         self._attr_extra_state_attributes = (
             attributes_fn(collar, self.pet)

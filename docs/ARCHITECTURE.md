@@ -48,9 +48,9 @@ History is optional enrichment, not live tracking. Unknown can mean no valid mat
 
 ### Last reported activity
 
-The sensor reads only `pet.telemetry.activityType` through the existing exact pet relationship. Known integer codes map to stable translated enum states. Missing, malformed, zero, and unknown codes produce unknown. Booleans, floats, and strings are rejected. Cached known classifications remain visible when collar reports age. A failed required refresh makes telemetry unavailable. No extra requests or timers are added.
+The sensor reads only `pet.telemetry.activityType` through the existing exact pet relationship. Known integer codes map to stable translated enum states. Missing, malformed, zero, and unknown codes produce unknown. Booleans, floats, and strings are rejected. The sensor reports unknown whenever the Connectivity rule finds the collar report older than the configured report age limit, and recovers on the next fresh report. A failed required refresh makes telemetry unavailable. No extra requests or timers are added.
 
-The code map comes from the Halo app. A live cloud response confirmed the field path, its integer type, and the resting code. The other codes are not yet observed live.
+The code map comes from the Halo app. A live cloud response confirmed the field path and its integer type. The meaning of each code has not been checked against observed behavior.
 
 ## Authentication
 
@@ -147,7 +147,7 @@ same entity IDs.
 ## Privacy boundary
 
 Config-entry diagnostics recursively redact generic provider IDs, names,
-serials, hardware UUIDs, coordinates, credentials, and account fields. Stable collar IDs and
+serials, hardware UUIDs, reporting-collar and current-fence IDs, coordinates, credentials, and account fields. Stable collar IDs and
 the local display name remain in Home Assistant's private device/entity
 registries because they provide durable identity and usable household labels;
 those local registries and backups must be protected as household data and are
@@ -159,4 +159,4 @@ GPS and compass calibration flags report on or off only for actual provider bool
 
 Connectivity evaluates the report timestamp when Home Assistant reads or publishes state. Old, missing, invalid, or excessively future-dated timestamps report off. There is no dedicated expiry timer, and a successful poll can leave old report data available. Missing optional values can be unknown without failing the refresh.
 
-Activity values are provider daily/current-period readings. Location, current-fence, and active-walk state are cloud-polled supplemental telemetry, not real-time containment proof. The next-telemetry sensor is a timestamp calculated from the last report and provider interval; it is not a local countdown. Recent-walk average speed is calculated locally from the already-sanitized distance and duration and causes no additional Halo request. Hardware issue details are emitted only when diagnostics reporting is explicitly reliable and every allowlisted status is structurally valid; otherwise the entity is unknown.
+Activity values are provider daily/current-period readings. Location, current-fence, and active-walk state are cloud-polled supplemental telemetry, not real-time containment proof. Present-tense values (reported activity, safety status, current fence, active walk, walk paused, active-walk duration and distance, and fence breach) report unknown whenever the Connectivity rule finds the collar report older than the configured report age limit. Other readings keep their last values. The next-telemetry sensor is a timestamp calculated from the last report and provider interval; it is not a local countdown. Recent-walk average speed is calculated locally from the already-sanitized distance and duration and causes no additional Halo request. Hardware issue details are emitted only when diagnostics reporting is explicitly reliable and every allowlisted status is structurally valid; otherwise the entity is unknown.

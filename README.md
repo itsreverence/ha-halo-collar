@@ -20,10 +20,10 @@ The integration is **telemetry-only by default**. Each collar has:
 - A device tracker with provider GPS coordinates. When Halo reports indoors and Wi-Fi, the tracker reports `home`. This does not verify the Wi-Fi network or physical home location, and it does not replace the map coordinates.
 - Battery, connectivity, location, fence, calibration, firmware, and diagnostic-status sensors, plus a **Fence breach event** for automations.
 - Provider daily/current-period activity metrics and cloud-polled active-walk duration and distance.
-- **Last reported activity** shows Halo's cached classification, such as walking or resting. A successful poll does not prove a fresh classification. Check **Last telemetry** and **Connectivity** for collar report age.
+- **Last reported activity** shows Halo's latest classification, such as walking or resting. Activity, safety status, current fence, active walk, and fence breach read unknown while **Connectivity** is off, so an old report never looks current. Battery, location, and other readings keep their last values.
 - Recent-walk sensors for the newest matching completed walk in the first 30 records returned by Halo. These are supplemental history, not live tracking. Unknown can mean no valid match in that window or an optional history request failure.
 
-The activity labels come from the Halo app. A live response confirmed the field and the resting label. The other labels have not been observed live yet.
+The activity labels come from the Halo app. A live response confirmed the field and its integer codes. The label meanings have not been checked against observed behavior yet.
 
 An account-level **Subscription** sensor summarizes subscription limits. Optional physical controls are described under [Options](#options). See [Architecture](docs/ARCHITECTURE.md#platforms) for detailed entity coverage.
 

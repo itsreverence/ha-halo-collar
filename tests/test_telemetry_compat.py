@@ -39,7 +39,7 @@ async def test_reported_activity_and_every_walk_sensor_write_and_refresh_real_ha
                 "petInfo": {"id": "pet-1", "telemetry": {"activityType": 9}},
                 "telemetry": {
                     "activityType": 9,
-                    "manifest": {"timestamp": "2020-01-01T00:00:00Z"},
+                    "manifest": {"timestamp": datetime.now(UTC).isoformat()},
                 },
             }
         ],
@@ -115,6 +115,16 @@ async def test_reported_activity_and_every_walk_sensor_write_and_refresh_real_ha
         assert activity.extra_state_attributes == {}
 
         state.pets[0]["telemetry"]["activityType"] = 4
+        await refresh()
+        assert written(activity).state == "running"
+
+        manifest = state.collars[0]["telemetry"]["manifest"]
+        fresh_timestamp = manifest["timestamp"]
+        manifest["timestamp"] = "2020-01-01T00:00:00Z"
+        await refresh()
+        assert written(activity).state == "unknown"
+        assert written(walk_sensors["last_walk_duration"]).state == "600"
+        manifest["timestamp"] = fresh_timestamp
         await refresh()
         assert written(activity).state == "running"
 

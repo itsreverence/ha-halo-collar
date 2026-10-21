@@ -689,6 +689,7 @@ def test_redact_masks_sensitive_collar_payload_without_mutating_input():
         "serialNumber": "FAKE-SERIAL-001",
         "uuId": "FAKE-HARDWARE-UUID",
         "deviceId": "fake-device-uuid",
+        "currentGeoFenceId": "fake-fence-id",
         "petInfo": {
             "name": "FakePet",
             "location": {"latitude": 40.7128, "longitude": -74.0060},
@@ -708,6 +709,7 @@ def test_redact_masks_sensitive_collar_payload_without_mutating_input():
         "serialNumber": collar["serialNumber"],
         "uuId": collar["uuId"],
         "deviceId": collar["deviceId"],
+        "currentGeoFenceId": collar["currentGeoFenceId"],
         "petInfo": {
             "name": collar["petInfo"]["name"],
             "location": dict(collar["petInfo"]["location"]),
@@ -729,6 +731,7 @@ def test_redact_masks_sensitive_collar_payload_without_mutating_input():
     assert result["serialNumber"] == REDACTED
     assert result["uuId"] == REDACTED
     assert result["deviceId"] == REDACTED
+    assert result["currentGeoFenceId"] == REDACTED
     assert result["petInfo"]["name"] == REDACTED
     # Keys matching the redaction list are masked wholesale, containers included.
     assert result["petInfo"]["location"] == REDACTED
@@ -743,6 +746,21 @@ def test_redact_masks_sensitive_collar_payload_without_mutating_input():
     assert result["telemetry"]["wiFi"]["ssid"] == REDACTED
     assert result["telemetry"]["wiFi"]["wifiName"] == REDACTED
     assert collar == original
+
+
+def test_redact_masks_nested_reporting_collar_id_but_keeps_report_time():
+    payload = {
+        "telemetry": {
+            "manifest": {
+                "reportingCollarId": "fake-collar-id",
+                "timestamp": "2026-07-06T11:00:00Z",
+            }
+        }
+    }
+
+    manifest = redact(payload)["telemetry"]["manifest"]
+
+    assert manifest == {"reportingCollarId": REDACTED, "timestamp": "2026-07-06T11:00:00Z"}
 
 
 def test_redact_is_case_insensitive_on_keys():
