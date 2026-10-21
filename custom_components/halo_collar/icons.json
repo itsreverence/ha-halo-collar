@@ -61,7 +61,7 @@
         "default": "mdi:fence"
       },
       "disable_fences_status": {
-        "default": "mdi:fence-electric"
+        "default": "mdi:gate-open"
       },
       "find_collar_status": {
         "default": "mdi:bell-ring-outline"
@@ -71,7 +71,7 @@
       "fences_enabled": {
         "default": "mdi:fence",
         "state": {
-          "off": "mdi:fence-electric"
+          "off": "mdi:gate-open"
         }
       },
       "active_walk": {
