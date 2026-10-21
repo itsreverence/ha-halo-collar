@@ -297,11 +297,12 @@ async def test_runtime_setup_registers_platforms_and_guarded_control_surface(has
 
     collar_id = client.state.collars[0]["id"]
     activity = _state_for_unique_id(hass, "sensor", f"{collar_id}_activity_duration")
-    assert float(activity.state) == 900
+    assert float(activity.state) == 15
+    assert activity.attributes["unit_of_measurement"] == "min"
     assert activity.attributes["goal"] == 1200.0
     assert activity.attributes["progress_percent"] == 75.0
     outdoor_time = _state_for_unique_id(hass, "sensor", f"{collar_id}_outdoor_time")
-    assert float(outdoor_time.state) == 300
+    assert float(outdoor_time.state) == 5
     assert outdoor_time.attributes["goal"] == 600.0
     assert outdoor_time.attributes["progress_percent"] == 50.0
     distance = _state_for_unique_id(hass, "sensor", f"{collar_id}_traveled_distance")
@@ -731,7 +732,7 @@ async def test_runtime_insight_sensor_updates_after_coordinator_refresh(hass):
     await hass.async_block_till_done()
 
     outdoor_time = _state_for_unique_id(hass, "sensor", f"{collar_id}_outdoor_time")
-    assert float(outdoor_time.state) == 480
+    assert float(outdoor_time.state) == 8
     assert outdoor_time.attributes["goal"] == 960.0
     assert outdoor_time.attributes["progress_percent"] == 50.0
 
@@ -776,7 +777,7 @@ async def test_present_tense_telemetry_is_unknown_while_connectivity_is_off(hass
         ("sensor", "last_reported_activity"): "resting",
         ("sensor", "safety_status"): "Safe",
         ("sensor", "current_fence"): "Synthetic Fence",
-        ("sensor", "active_walk_duration"): "120.0",
+        ("sensor", "active_walk_duration"): "2.0",
         ("sensor", "active_walk_distance"): "250.0",
         ("binary_sensor", "active_walk"): STATE_ON,
         ("binary_sensor", "active_walk_paused"): STATE_ON,
@@ -851,8 +852,8 @@ async def test_runtime_walk_sensors_are_safe_and_update_after_refresh(hass):
     assert last_walk.attributes["started_at"] == "2026-07-06T11:00:00+00:00"
     assert last_walk.attributes["start_trigger"] == "Button"
     duration = _state_for_unique_id(hass, "sensor", f"{collar_id}_last_walk_duration")
-    assert duration.state == "420"
-    assert duration.attributes["unit_of_measurement"] == "s"
+    assert duration.state == "7.0"
+    assert duration.attributes["unit_of_measurement"] == "min"
     distance = _state_for_unique_id(hass, "sensor", f"{collar_id}_last_walk_distance")
     assert distance.state == "125.5"
     assert distance.attributes["unit_of_measurement"] == "m"
@@ -928,7 +929,7 @@ async def test_runtime_walk_sensors_are_safe_and_update_after_refresh(hass):
     serialized_updated_attributes = json.dumps(updated_last_walk.attributes, default=str).lower()
     assert "private_location_sentinel" not in serialized_updated_attributes
     assert "private_location_sentinel" not in str(updated_last_walk.attributes).lower()
-    assert _state_for_unique_id(hass, "sensor", f"{collar_id}_last_walk_duration").state == "180"
+    assert _state_for_unique_id(hass, "sensor", f"{collar_id}_last_walk_duration").state == "3.0"
     assert _state_for_unique_id(hass, "sensor", f"{collar_id}_last_walk_distance").state == "50.0"
 
 
@@ -1088,8 +1089,8 @@ async def test_runtime_active_walk_entities_track_verified_collar_snapshots(hass
     assert _state_for_unique_id(hass, "binary_sensor", paused_unique_id).state == "off"
     duration = _state_for_unique_id(hass, "sensor", duration_unique_id)
     distance = _state_for_unique_id(hass, "sensor", distance_unique_id)
-    assert duration.state == "60.0"
-    assert duration.attributes["unit_of_measurement"] == "s"
+    assert duration.state == "1.0"
+    assert duration.attributes["unit_of_measurement"] == "min"
     assert distance.state == "125.5"
     assert distance.attributes["unit_of_measurement"] == "m"
     serialized_entities = json.dumps(
@@ -1108,7 +1109,7 @@ async def test_runtime_active_walk_entities_track_verified_collar_snapshots(hass
     await coordinator.async_refresh()
     await hass.async_block_till_done()
     assert _state_for_unique_id(hass, "binary_sensor", paused_unique_id).state == STATE_ON
-    assert _state_for_unique_id(hass, "sensor", duration_unique_id).state == "120.0"
+    assert _state_for_unique_id(hass, "sensor", duration_unique_id).state == "2.0"
     assert _state_for_unique_id(hass, "sensor", distance_unique_id).state == "250.0"
 
     client.state.pets[0]["collarInfo"]["telemetry"]["walk"] = None
