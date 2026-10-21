@@ -763,6 +763,23 @@ def test_redact_masks_nested_reporting_collar_id_but_keeps_report_time():
     assert manifest == {"reportingCollarId": REDACTED, "timestamp": "2026-07-06T11:00:00Z"}
 
 
+def test_redact_masks_signed_icon_and_report_urls_that_embed_pet_ids():
+    pet = {
+        "iconUrl": "https://storage.invalid/Pet/fake-pet-id/Icon/a.jpeg?sig=fake-signature",
+        "reports": [
+            {"type": "activity", "url": "https://api.invalid/reports/activity?PetId=fake-pet-id"}
+        ],
+        "colorHex": "#315197",
+    }
+
+    result = redact(pet)
+
+    assert result["iconUrl"] == REDACTED
+    assert result["reports"] == [{"type": "activity", "url": REDACTED}]
+    assert result["colorHex"] == "#315197"
+    assert "fake-pet-id" not in str(result)
+
+
 def test_redact_is_case_insensitive_on_keys():
     payload = {
         "ACCESS_TOKEN": "fake-access-token",
