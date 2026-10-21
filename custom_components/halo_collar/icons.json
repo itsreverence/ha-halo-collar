@@ -1,0 +1,93 @@
+{
+  "entity": {
+    "sensor": {
+      "battery_status": {
+        "default": "mdi:battery-charging-outline"
+      },
+      "remaining_battery_lifetime": {
+        "default": "mdi:battery-clock"
+      },
+      "current_adapter": {
+        "default": "mdi:access-point-network"
+      },
+      "wifi_status": {
+        "default": "mdi:wifi"
+      },
+      "cellular_status": {
+        "default": "mdi:signal-cellular-3"
+      },
+      "gps_accuracy": {
+        "default": "mdi:crosshairs-gps"
+      },
+      "location_status": {
+        "default": "mdi:map-marker-radius"
+      },
+      "safety_status": {
+        "default": "mdi:shield-check-outline"
+      },
+      "firmware": {
+        "default": "mdi:chip"
+      },
+      "last_reported_activity": {
+        "default": "mdi:dog-side",
+        "state": {
+          "walking": "mdi:walk",
+          "resting": "mdi:sofa",
+          "driving": "mdi:car",
+          "running": "mdi:run",
+          "eating_drinking": "mdi:bone",
+          "sniffing": "mdi:paw",
+          "lying": "mdi:bed",
+          "human_carry": "mdi:hand-heart",
+          "on_shelf": "mdi:bookshelf"
+        }
+      },
+      "walks_today": {
+        "default": "mdi:walk"
+      },
+      "current_fence": {
+        "default": "mdi:fence"
+      },
+      "fence_configuration": {
+        "default": "mdi:fence"
+      },
+      "average_connectivity": {
+        "default": "mdi:signal-variant"
+      },
+      "subscription": {
+        "default": "mdi:card-account-details-outline"
+      },
+      "enable_fences_status": {
+        "default": "mdi:fence"
+      },
+      "disable_fences_status": {
+        "default": "mdi:fence-electric"
+      },
+      "find_collar_status": {
+        "default": "mdi:bell-ring-outline"
+      }
+    },
+    "binary_sensor": {
+      "fences_enabled": {
+        "default": "mdi:fence",
+        "state": {
+          "off": "mdi:fence-electric"
+        }
+      },
+      "active_walk": {
+        "default": "mdi:dog-side",
+        "state": {
+          "on": "mdi:walk"
+        }
+      },
+      "active_walk_paused": {
+        "default": "mdi:pause-circle-outline"
+      }
+    },
+    "event": {
+      "fence_breach": {
+        "default": "mdi:shield-alert-outline"
+      }
+    }
+  }
+}

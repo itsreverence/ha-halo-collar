@@ -794,3 +794,16 @@ def test_redact_is_case_insensitive_on_keys():
     assert result["Refresh_Token"] == REDACTED
     assert result["CLIENT_SECRET"] == REDACTED
     assert result["scan_interval"] == 300
+
+
+def test_icon_translations_target_existing_entity_translation_keys():
+    integration = Path(__file__).resolve().parents[1] / "custom_components" / "halo_collar"
+    icons = json.loads((integration / "icons.json").read_text())["entity"]
+    strings = json.loads((integration / "strings.json").read_text())["entity"]
+    for platform, entries in icons.items():
+        assert set(entries) <= set(strings[platform]), platform
+        for entry in entries.values():
+            for icon in [entry["default"], *entry.get("state", {}).values()]:
+                assert icon.startswith("mdi:"), icon
+    activity_states = set(icons["sensor"]["last_reported_activity"]["state"])
+    assert activity_states == set(reported_activity_options())
