@@ -383,10 +383,6 @@ WALK_SENSORS = (
         native_unit_of_measurement=UnitOfSpeed.METERS_PER_SECOND,
         suggested_display_precision=2,
     ),
-    SensorEntityDescription(
-        key="last_walk_feedback_count",
-        translation_key="last_walk_feedback_count",
-    ),
 )
 
 
@@ -429,9 +425,6 @@ class HaloWalkSensor(  # pyright: ignore[reportIncompatibleVariableOverride]
             self._attr_extra_state_attributes = {}
         elif key == "last_walk_distance":
             self._attr_native_value = summary["distance"]
-            self._attr_extra_state_attributes = {}
-        elif key == "last_walk_feedback_count":
-            self._attr_native_value = summary["feedback_count"]
             self._attr_extra_state_attributes = {}
         elif key == "last_walk_average_speed":
             duration = summary["duration"]

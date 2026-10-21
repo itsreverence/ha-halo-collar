@@ -151,7 +151,6 @@
       "last_walk_duration": {"name": "Recent walk duration"},
       "last_walk_distance": {"name": "Recent walk distance"},
       "last_walk_average_speed": {"name": "Recent walk average speed"},
-      "last_walk_feedback_count": {"name": "Recent walk feedback count"},
       "subscription": {"name": "Subscription"}
     },
     "binary_sensor": {

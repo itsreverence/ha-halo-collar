@@ -82,50 +82,22 @@ def test_reported_activity_translation_state_keys_match_options():
     integration = Path(__file__).resolve().parents[1] / "custom_components" / "halo_collar"
     strings = json.loads((integration / "strings.json").read_text())["entity"]["sensor"]
     english = json.loads((integration / "translations" / "en.json").read_text())["entity"]["sensor"]
-    for key in ("last_reported_activity", "last_walk_feedback_count"):
-        assert strings[key] == english[key]
+    assert strings["last_reported_activity"] == english["last_reported_activity"]
     assert set(strings["last_reported_activity"]["state"]) == set(reported_activity_options())
 
 
-@pytest.mark.parametrize(
-    ("raw", "expected"),
-    [(0, 0), (3, 3), (2.0, 2), ("4", 4), (" 5 ", 5)]
-    + [
-        (value, None)
-        for value in (
-            None,
-            True,
-            False,
-            -1,
-            1.5,
-            "1.0",
-            "bad",
-            "9" * 5000,
-            [],
-            {},
-            float("nan"),
-            float("inf"),
-        )
-    ],
-)
-def test_walk_feedback_count_normalizes_without_changing_newest_selection(raw, expected):
+def test_oversized_walk_duration_string_stays_unknown():
     summary = latest_completed_walk(
         [
-            {"endedAt": "2026-07-06T10:00:00Z", "pets": [{"id": "pet-1", "feedbacksCount": 9}]},
-            {"endedAt": "2026-07-06T11:00:00Z", "pets": [{"id": "pet-1", "feedbacksCount": raw}]},
+            {
+                "endedAt": "2026-07-06T11:00:00Z",
+                "pets": [{"id": "pet-1", "walkedDurationInSeconds": "9" * 5000}],
+            }
         ],
         "pet-1",
     )
     assert summary is not None
-    assert summary["ended_at"] == datetime(2026, 7, 6, 11, tzinfo=UTC)
-    assert summary["feedback_count"] == expected
-
-
-def test_walk_feedback_requires_one_exact_pet_match():
-    walk = {"endedAt": "2026-07-06T11:00:00Z", "pets": [{"id": "pet-other", "feedbacksCount": 7}]}
-    assert latest_completed_walk([walk], "pet-1") is None
-    walk["pets"] = [{"id": "pet-1", "feedbacksCount": 7}] * 2
-    assert latest_completed_walk([walk], "pet-1") is None
+    assert summary["duration"] is None
 
 
 def _complete_issues(status: str = "noIssue") -> dict:
@@ -192,7 +164,6 @@ def test_latest_completed_walk_selects_newest_matching_safe_summary():
         "started_at": datetime(2026, 7, 6, 11, 0, tzinfo=UTC),
         "duration": 420,
         "distance": 125.5,
-        "feedback_count": None,
         "start_trigger": "Button",
     }
 
@@ -262,7 +233,6 @@ def test_latest_completed_walk_keeps_newest_structural_record_when_optional_fiel
         "started_at": None,
         "duration": None,
         "distance": None,
-        "feedback_count": None,
         "start_trigger": None,
     }
 
@@ -717,6 +687,7 @@ def test_indoors_on_wifi_requires_both_signals():
 def test_redact_masks_sensitive_collar_payload_without_mutating_input():
     collar = {
         "serialNumber": "FAKE-SERIAL-001",
+        "uuId": "FAKE-HARDWARE-UUID",
         "deviceId": "fake-device-uuid",
         "petInfo": {
             "name": "FakePet",
@@ -735,6 +706,7 @@ def test_redact_masks_sensitive_collar_payload_without_mutating_input():
     }
     original = {
         "serialNumber": collar["serialNumber"],
+        "uuId": collar["uuId"],
         "deviceId": collar["deviceId"],
         "petInfo": {
             "name": collar["petInfo"]["name"],
@@ -755,6 +727,7 @@ def test_redact_masks_sensitive_collar_payload_without_mutating_input():
     result = redact(collar)
 
     assert result["serialNumber"] == REDACTED
+    assert result["uuId"] == REDACTED
     assert result["deviceId"] == REDACTED
     assert result["petInfo"]["name"] == REDACTED
     # Keys matching the redaction list are masked wholesale, containers included.

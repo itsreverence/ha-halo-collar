@@ -16,6 +16,7 @@ REDACT_KEYS = frozenset(
         "id",
         "token",
         "serialnumber",
+        "uuid",
         "latitude",
         "longitude",
         "location",
@@ -107,7 +108,6 @@ class WalkSummary(TypedDict):
     started_at: datetime | None
     duration: int | None
     distance: float | None
-    feedback_count: int | None
     start_trigger: str | None
 
 
@@ -330,7 +330,6 @@ def latest_completed_walk(walks: list[dict[str, Any]], pet_id: Any) -> WalkSumma
             "started_at": started_at,
             "duration": duration,
             "distance": distance,
-            "feedback_count": non_negative_integer(pet.get("feedbacksCount")),
             "start_trigger": trigger,
         }
         if newest is None or ended_at > newest["ended_at"]:

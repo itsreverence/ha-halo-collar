@@ -736,7 +736,7 @@ async def test_runtime_insight_sensor_updates_after_coordinator_refresh(hass):
     assert outdoor_time.attributes["progress_percent"] == 50.0
 
 
-async def test_reported_activity_and_feedback_translations_match_enum_options(hass):
+async def test_reported_activity_translations_match_enum_options(hass):
     state = _state()
     state.pets[0]["telemetry"]["activityType"] = 8
     client = FakeHaloClient(state)
@@ -744,11 +744,8 @@ async def test_reported_activity_and_feedback_translations_match_enum_options(ha
     entry.add_to_hass(hass)
     await _setup(hass, entry, client)
     activity = _state_for_unique_id(hass, "sensor", "collar-1_last_reported_activity")
-    count = _state_for_unique_id(hass, "sensor", "collar-1_last_walk_feedback_count")
     assert activity.state == "human_carry"
     assert activity.attributes["friendly_name"] == "Cowboy Last reported activity"
-    assert count.attributes["friendly_name"] == "Cowboy Recent walk feedback count"
-    assert count.state == STATE_UNKNOWN
     translations = await async_get_translations(hass, "en", "entity", [DOMAIN])
     prefix = f"component.{DOMAIN}.entity.sensor.last_reported_activity.state."
     actual = {

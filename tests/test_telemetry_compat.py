@@ -55,7 +55,6 @@ async def test_reported_activity_and_every_walk_sensor_write_and_refresh_real_ha
                         "id": "pet-1",
                         "walkedDurationInSeconds": 600,
                         "walkedDistanceInMeters": 1200,
-                        "feedbacksCount": 0,
                     }
                 ],
             }
@@ -102,7 +101,6 @@ async def test_reported_activity_and_every_walk_sensor_write_and_refresh_real_ha
             "last_walk_duration": "600",
             "last_walk_distance": "1200.0",
             "last_walk_average_speed": "2.0",
-            "last_walk_feedback_count": "0",
         }
         assert set(expected) == set(walk_sensors)
         for key, sensor in walk_sensors.items():
@@ -112,18 +110,13 @@ async def test_reported_activity_and_every_walk_sensor_write_and_refresh_real_ha
             datetime(2026, 7, 6, 11, tzinfo=UTC).isoformat()
         )
         assert written(walk_sensors["last_walk"]).attributes["start_trigger"] == "Button"
-        count = walk_sensors["last_walk_feedback_count"]
-        for entity in (activity, count):
-            assert entity.native_unit_of_measurement is None
-            assert entity.state_class is None
-            assert entity.extra_state_attributes == {}
-        assert count.device_class is None
+        assert activity.native_unit_of_measurement is None
+        assert activity.state_class is None
+        assert activity.extra_state_attributes == {}
 
         state.pets[0]["telemetry"]["activityType"] = 4
-        state.walks[0]["pets"][0]["feedbacksCount"] = "3"
         await refresh()
         assert written(activity).state == "running"
-        assert written(count).state == "3"
 
         failure = True
         await refresh()
@@ -132,17 +125,13 @@ async def test_reported_activity_and_every_walk_sensor_write_and_refresh_real_ha
         failure = False
         await refresh()
         assert written(activity).state == "running"
-        assert written(count).state == "3"
 
         state.pets[0]["telemetry"] = {}
-        state.walks[0]["pets"][0].pop("feedbacksCount")
         await refresh()
         assert written(activity).state == "unknown"
-        assert written(count).state == "unknown"
         assert written(walk_sensors["last_walk_duration"]).state == "600"
 
         state.pets[0]["telemetry"]["activityType"] = 1
-        state.walks[0]["pets"][0]["feedbacksCount"] = 8
         valid_state = deepcopy(state)
         state.pets.append(deepcopy(state.pets[0]))
         await refresh()

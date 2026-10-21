@@ -63,7 +63,7 @@ uv run --isolated --python 3.12.7 \
 This lane verifies tracker import, indoor Home state, options-flow startup, and
 control-status readability and listener isolation through real entity writes.
 It also writes and refreshes reported-activity and every recent-walk sensor,
-including enum metadata, zero feedback counts, unknown, unavailable, and cached stale values.
+including enum metadata, unknown, unavailable, and cached stale values.
 Reauthentication checks call installed ConfigFlow methods and the Home Assistant
 task scheduler with synthetic entry, storage, login, and reload boundaries.
 Worker-cleanup tests also use synthetic config-entry boundaries.
