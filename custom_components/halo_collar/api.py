@@ -22,7 +22,7 @@ TOKEN_REFRESH_SKEW_SECONDS = 60
 REQUEST_TIMEOUT_SECONDS = 30
 OPTIONAL_SERVER_TIME_TIMEOUT_SECONDS = 5
 OPTIONAL_WALK_HISTORY_TIMEOUT_SECONDS = 5
-# The Halo app's own walk-history page size. A wider window keeps one dog's walks from
+# The Halo app's own walk-history page size. A wider window reduces one dog's walks
 # crowding another dog out on multi-dog accounts, in a single request per poll.
 WALK_HISTORY_PAGE_SIZE = 30
 # Halo rejects API calls from app versions below its server-enforced Android floor.

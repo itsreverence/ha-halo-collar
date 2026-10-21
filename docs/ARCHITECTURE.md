@@ -42,7 +42,7 @@ The Find status sensor owns one local expiry timer, independently of the button.
 
 ### Recent-walk history
 
-The integration requests `/walk/my?page=1&pageSize=30` and retains at most thirty returned records, the Halo app's own page size. One request per poll keeps one dog's walks from crowding another out on multi-dog accounts without paging. It selects the newest matching completed walk by valid `endedAt`, then exposes end time, duration, distance, and locally derived average speed. The request has no completed-only filter and the integration does not guarantee provider ordering.
+The integration requests `/walk/my?page=1&pageSize=30` and retains at most thirty returned records, the Halo app's own page size. One request per poll reduces crowding on multi-dog accounts without paging. An unordered response, or 30 walks from one dog, can still leave another dog's latest walk out. It selects the newest matching completed walk by valid `endedAt`, then exposes end time, duration, distance, and locally derived average speed. The request has no completed-only filter and the integration does not guarantee provider ordering.
 
 History is optional enrichment, not live tracking. Unknown can mean no valid matching record in that window or an optional history timeout or error. It does not prove that no historical walk exists. Recent-walk entities never expose route, location, user, walk-ID, feedback, or correction fields.
 
