@@ -16,6 +16,7 @@ from custom_components.halo_collar.helpers import (
     average_connectivity,
     collar_hardware_issue,
     collar_issue_details,
+    collar_model,
     count_goal_progress_attributes,
     count_value,
     current_fence_name,
@@ -829,3 +830,20 @@ def test_icon_translations_target_existing_entity_translation_keys():
                 assert icon.startswith("mdi:"), icon
     activity_states = set(icons["sensor"]["last_reported_activity"]["state"])
     assert activity_states == set(reported_activity_options())
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("version5", "Halo Collar 5"),
+        ("Version4", "Halo Collar 4"),
+        (" version3 ", "Halo Collar 3"),
+        ("Halo 4", "Halo 4"),
+        ("version", "version"),
+        ("", None),
+        (None, None),
+        (5, None),
+    ],
+)
+def test_collar_model_names_halo_collar_types(raw, expected):
+    assert collar_model(raw) == expected

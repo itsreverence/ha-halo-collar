@@ -5,7 +5,7 @@ from typing import Any
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
-from .helpers import pet_for_collar
+from .helpers import collar_model, pet_for_collar
 
 
 class HaloEntity(CoordinatorEntity):
@@ -19,7 +19,7 @@ class HaloEntity(CoordinatorEntity):
             "identifiers": {(DOMAIN, self._collar_id)},
             "name": collar.get("petInfo", {}).get("name") or "Halo Collar",
             "manufacturer": "Halo Collar",
-            "model": collar.get("type"),
+            "model": collar_model(collar.get("type")),
             "sw_version": collar.get("firmware", {}).get("version"),
             "serial_number": collar.get("serialNumber"),
         }

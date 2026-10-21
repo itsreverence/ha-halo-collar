@@ -159,7 +159,10 @@
       "gps_calibration_required": {"name": "GPS calibration required"},
       "compass_calibration_required": {"name": "Compass calibration required"},
       "fences_enabled": {"name": "Fences enabled"},
-      "fences_synchronized": {"name": "Fence state synchronized"},
+      "fences_synchronized": {
+        "name": "Fence state synchronized",
+        "state": {"on": "Synced", "off": "Not synced"}
+      },
       "active_walk": {"name": "Active walk"},
       "active_walk_paused": {"name": "Active walk paused"},
       "collar_reporting_issue": {"name": "Collar reporting issue"},

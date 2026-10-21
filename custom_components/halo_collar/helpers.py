@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import re
 from datetime import UTC, datetime, timedelta
 from typing import Any, TypedDict
 
@@ -253,6 +254,14 @@ def pet_fences_enabled(pet: dict[str, Any] | None) -> bool | None:
     """Return only the collar-reported fence mode, never desired state."""
     reported = nested(pet or {}, "telemetry", "mode", "fencesOn")
     return reported if isinstance(reported, bool) else None
+
+
+def collar_model(value: Any) -> str | None:
+    """Turn Halo's collar type, such as "version5", into a product name."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    match = re.fullmatch(r"version(\d+)", value.strip(), re.IGNORECASE)
+    return f"Halo Collar {match.group(1)}" if match else value.strip()
 
 
 def pet_safety_status(pet: dict[str, Any] | None) -> Any:

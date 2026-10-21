@@ -80,7 +80,6 @@ BINARY_SENSORS = (
     HaloBinarySensorDescription(
         key="fences_synchronized",
         translation_key="fences_synchronized",
-        device_class=BinarySensorDeviceClass.CONNECTIVITY,
         value_fn=lambda _c, pet, _entry: (
             pet.get("isFencesSynchronized")
             if pet is not None and isinstance(pet.get("isFencesSynchronized"), bool)

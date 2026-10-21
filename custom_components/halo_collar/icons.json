@@ -82,6 +82,12 @@
       },
       "active_walk_paused": {
         "default": "mdi:pause-circle-outline"
+      },
+      "fences_synchronized": {
+        "default": "mdi:sync",
+        "state": {
+          "off": "mdi:sync-alert"
+        }
       }
     },
     "event": {

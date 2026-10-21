@@ -294,6 +294,10 @@ async def test_runtime_setup_registers_platforms_and_guarded_control_surface(has
     assert hass.states.get("event.cowboy_fence_breach_event") is not None
     assert hass.states.get("binary_sensor.cowboy_fences_enabled").state == STATE_ON
     assert hass.states.get("binary_sensor.cowboy_fence_state_synchronized").state == STATE_ON
+    assert (
+        "device_class"
+        not in hass.states.get("binary_sensor.cowboy_fence_state_synchronized").attributes
+    )
 
     collar_id = client.state.collars[0]["id"]
     activity = _state_for_unique_id(hass, "sensor", f"{collar_id}_activity_duration")
