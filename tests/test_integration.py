@@ -765,24 +765,44 @@ async def test_present_tense_telemetry_is_unknown_while_connectivity_is_off(hass
     walk = {"durationFromStartInSeconds": 120, "walkedDistance": 250, "isPaused": True}
     state.collars[0]["telemetry"].update({"walk": walk, "fenceBreach": {}})
     state.pets[0]["collarInfo"].setdefault("telemetry", {})["walk"] = walk
-    state.collars[0]["telemetry"]["manifest"]["timestamp"] = "2020-01-01T00:00:00Z"
+    manifest = state.collars[0]["telemetry"]["manifest"]
+    fresh_timestamp = manifest["timestamp"]
     client = FakeHaloClient(state)
     entry = _entry({CONF_ENABLE_FENCE_CONTROLS: False})
     entry.add_to_hass(hass)
     await _setup(hass, entry, client)
+    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    present_tense = {
+        ("sensor", "last_reported_activity"): "resting",
+        ("sensor", "safety_status"): "Safe",
+        ("sensor", "current_fence"): "Synthetic Fence",
+        ("sensor", "active_walk_duration"): "120.0",
+        ("sensor", "active_walk_distance"): "250.0",
+        ("binary_sensor", "active_walk"): STATE_ON,
+        ("binary_sensor", "active_walk_paused"): STATE_ON,
+        ("binary_sensor", "fence_breach"): STATE_ON,
+    }
+
+    async def refresh_with_report(timestamp):
+        manifest["timestamp"] = timestamp
+        await coordinator.async_refresh()
+        await hass.async_block_till_done()
+
+    def states():
+        return {
+            (platform, key): _state_for_unique_id(hass, platform, f"collar-1_{key}").state
+            for platform, key in present_tense
+        }
+
+    assert states() == present_tense
+
+    await refresh_with_report("2020-01-01T00:00:00Z")
     assert _state_for_unique_id(hass, "binary_sensor", "collar-1_online").state == "off"
-    for platform, key in (
-        ("sensor", "last_reported_activity"),
-        ("sensor", "safety_status"),
-        ("sensor", "current_fence"),
-        ("sensor", "active_walk_duration"),
-        ("sensor", "active_walk_distance"),
-        ("binary_sensor", "active_walk"),
-        ("binary_sensor", "active_walk_paused"),
-        ("binary_sensor", "fence_breach"),
-    ):
-        assert _state_for_unique_id(hass, platform, f"collar-1_{key}").state == STATE_UNKNOWN, key
+    assert states() == dict.fromkeys(present_tense, STATE_UNKNOWN)
     assert _state_for_unique_id(hass, "sensor", "collar-1_battery").state == "90"
+
+    await refresh_with_report(fresh_timestamp)
+    assert states() == present_tense
 
 
 async def test_runtime_walk_sensors_are_safe_and_update_after_refresh(hass):
