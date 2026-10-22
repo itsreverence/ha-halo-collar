@@ -50,8 +50,8 @@ The check covers everything above within these bounds: one pet and one collar, a
 ## Run it
 
 ```bash
-uv run pytest tests/test_control_interleavings.py -q        # ~25 s, ~40k schedules
-uv run python scripts/check_control_mutants.py              # ~50 s, proves the check can fail
+uv run pytest tests/test_control_interleavings.py -q        # ~15 s, ~36k schedules
+uv run python scripts/check_control_mutants.py              # ~80 s, proves the check can fail
 ```
 
 The first command also runs inside `uv run pytest -q`. The mutant script copies `custom_components/`, `tests/` and `pyproject.toml` into a temporary directory and never writes to the checkout. It first runs the unmutated explorer there and stops with `BASELINE failed` unless it passes. Then it applies each broken variant of `controls.py` to the copy in turn and expects a `Violation`. Every mutant line should read `CAUGHT`. `STALE`, `MISSED` and `TIMEOUT` (no verdict within 600 s) all make it exit non-zero.

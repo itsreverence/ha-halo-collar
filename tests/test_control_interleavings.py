@@ -439,7 +439,6 @@ class Harness:
             self.log.append(f"txn{txn} presses {action}")
             self.tasks[txn] = asyncio.create_task(self.press(txn, action))
         budget = self.scenario.budget
-        env = list(self.scenario.env) + [f"cancel_txn{t}" for t in self.tasks]
         while True:
             await self.settle()
             if self.violation is not None:
@@ -450,6 +449,8 @@ class Harness:
             if not self.gates:
                 break
             gates = list(self.gates)
+            env = [*self.scenario.env]
+            env += [f"cancel_txn{t}" for t, task in self.tasks.items() if not task.done()]
             # Options: release a gate; apply an environment event; or release a gate and
             # cancel its press in the same loop tick (cancel first, or release first).
             n_env = len(env) if budget else 0
@@ -471,7 +472,6 @@ class Harness:
                 choice = same_tick
                 budget -= 1
             gate = gates[choice]
-            outcome = gate.outcomes[self.choose(len(gate.outcomes))]
             if same_tick is not None and cancel_first:
                 self.log.append(f"environment: cancel_txn{gate.txn} (same tick, before)")
                 self.tasks[gate.txn].cancel()
@@ -479,6 +479,7 @@ class Harness:
                 # The press was awaiting this gate directly, so cancel won the race,
                 # as it would against a real I/O completion callback.
                 continue
+            outcome = gate.outcomes[self.choose(len(gate.outcomes))]
             self.log.append(f"txn{gate.txn} {gate.kind} completes: {outcome}")
             gate.future.set_result(outcome)
             if same_tick is not None and not cancel_first:
