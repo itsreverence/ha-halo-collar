@@ -51,7 +51,7 @@ The check covers everything above within these bounds: one pet and one collar, a
 
 ```bash
 uv run pytest tests/test_control_interleavings.py -q        # ~15 s, ~36k schedules
-uv run python scripts/check_control_mutants.py              # ~80 s, proves the check can fail
+uv run python scripts/check_control_mutants.py              # ~1.5 to 3 min, proves the check can fail
 ```
 
 The first command also runs inside `uv run pytest -q`. The mutant script copies `custom_components/`, `tests/` and `pyproject.toml` into a temporary directory and never writes to the checkout. It first runs the unmutated explorer there and stops with `BASELINE failed` unless it passes. Then it applies each broken variant of `controls.py` to the copy in turn and expects a `Violation`. Every mutant line should read `CAUGHT`. `STALE`, `MISSED` and `TIMEOUT` (no verdict within 600 s) all make it exit non-zero.
@@ -94,7 +94,7 @@ An `AssertionError` from `_check_encoding` can come from either side, because it
 
 | Check | Covers |
 |---|---|
-| P1, P2, P5 (fence) | `controls.py`: `async_set_fence_mode`, `_validate_options`, `_validate_snapshot`, `_is_confirmed`, `_async_dispatch_and_reconcile`, `control_stale_after`. `helpers.py`: `fence_disable_block_reason`, `is_online`, `pet_fences_enabled`, `has_active_walk`, `pet_for_collar`. `api.py`: `async_set_fences_enabled`, `_async_put_json`, `_async_refresh_if_needed`. Not explored: unknown fence mode. `World.fences_on` is always a bool, so the explorer never reaches the "Halo has not reported current fence mode" refusal. No transaction-level test covers it either. `tests/test_extractors.py` checks only that `fence_disable_block_reason` returns it |
+| P1, P2, P5 (fence) | `controls.py`: `async_set_fence_mode`, `_validate_options`, `_validate_snapshot`, `_is_confirmed`, `_async_dispatch_and_reconcile`, `control_stale_after`. `helpers.py`: `fence_disable_block_reason`, `is_online`, `pet_fences_enabled`, `has_active_walk`, `pet_for_collar`. `api.py`: `async_set_fences_enabled`, `_async_put_json`, `_async_refresh_if_needed`. Not explored: unknown fence mode. `World.fences_on` is always a bool, so the explorer never reaches the "Halo has not reported current fence mode" refusal. `tests/test_controls.py::test_direct_disable_call_fails_closed_after_fresh_read` covers it at the transaction level |
 | P1, P2, P4, P5 (find) | `controls.py`: `async_find_collar`, `_validate_find_options`, `_validate_find_snapshot`, `_ensure_find_cooldown_clear`, `find_collar_cooldown_remaining`, `_async_dispatch_find_and_refresh`. `helpers.py`: `subscription_feature_enabled`, `nested`. `api.py`: `async_find_collar`, `_async_put_no_content` |
 | P8 | The same transaction paths as P1/P5. Catches a gate that refuses every press |
 | P3, P6, P7, liveness | `controls.py`: `_async_finish_committed_phase`, the `async with control_lock` blocks, the `dispatch_committed` flags |
@@ -106,12 +106,12 @@ CI enforces both commands. The `tests` job runs the explorer, and the `control-m
 
 CI cannot tell whether the harness still models the code. A fake can drift from the real transport, or an oracle from the documented rule, while every mutant stays `CAUGHT`. The sync commit marks where a person last checked that.
 
-**Sync commit:** `67fa37eefa1d03e9dd50fb64d73b3503c44bdece`. The harness and this record were last confirmed to describe the covered files at this commit.
+**Sync commit:** `5c6b1cf84688b601514028b14fc561d63243318f`. The harness and this record were last confirmed to describe the covered files at this commit.
 
 To see whether model fidelity needs another review:
 
 ```bash
-git diff --stat 67fa37eefa1d03e9dd50fb64d73b3503c44bdece -- custom_components/halo_collar/controls.py custom_components/halo_collar/api.py custom_components/halo_collar/transport.py custom_components/halo_collar/helpers.py custom_components/halo_collar/entity.py custom_components/halo_collar/switch.py custom_components/halo_collar/button.py
+git diff --stat 5c6b1cf84688b601514028b14fc561d63243318f -- custom_components/halo_collar/controls.py custom_components/halo_collar/api.py custom_components/halo_collar/transport.py custom_components/halo_collar/helpers.py custom_components/halo_collar/entity.py custom_components/halo_collar/switch.py custom_components/halo_collar/button.py
 ```
 
 If that diff is not empty, read it and confirm (or update) that the fakes, gates, oracles, and this coverage table still describe the code. Then move the sync commit forward.

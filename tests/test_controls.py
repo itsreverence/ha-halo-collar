@@ -240,6 +240,7 @@ async def test_direct_disable_call_revalidates_option_before_refresh_or_write():
     ("pet", "collar", "message"),
     [
         (_pet(synchronized=False), _collar(), "synchronized"),
+        ({**_pet(), "telemetry": {"mode": {}}}, _collar(), "current fence mode"),
         (_pet(walk={"id": "walk-1"}), _collar(), "active walk"),
         (_pet(walk="malformed"), _collar(), "active walk"),
         (
