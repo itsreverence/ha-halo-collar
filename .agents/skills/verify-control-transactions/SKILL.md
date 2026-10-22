@@ -21,7 +21,7 @@ description: Exhaustively check the guarded write transactions (fence mode and F
 | `token_refresh` | `HaloApiClient._async_token_request` (token starts expired or valid) | ok, fail (`HaloAuthError`) |
 | `put` | `HaloWriteTransport.put`, which calls `pre_dispatch()` with no await before the PUT, like the real one | fence: ok, timeout_after_apply, connect_error, http_500. find: ok, http_404, timeout, http_500 |
 
-A stateless DFS enumerates every choice: which parked gate to release, each gate's outcome, and up to `budget` environment events. The events are option revocations, `stale_after` tightening, stale telemetry, active or unknown walk, fences unsynced, collar rebound to another pet, one-sided mapping, entitlement lost, fences flipped in the official app, cooldown elapsed, and cancelling a press. Cancellation can be a separate step, or land in the same loop tick as a gate completing (in either order). Environment changes reach the snapshot through a modeled background refresh. Every event calls `_check_encoding`, which asserts that the real helpers (`is_online`, `has_active_walk`, `pet_for_collar`, `pet_fences_enabled`, `subscription_feature_enabled`) read the payload the way the abstract `World` says.
+A stateless DFS enumerates every choice: which parked gate to release, each gate's outcome, and up to `budget` environment events. The events are option revocations, `stale_after` tightening, stale telemetry, active or unknown walk, fences unsynced, collar rebound to another pet, one-sided mapping, entitlement lost, fences flipped in the official app, cooldown elapsed, and cancelling a press. Cancellation can be a separate step, or land in the same loop tick as a gate completing (in either order). Environment changes reach the snapshot through a modeled background refresh. Only `Harness.rebuild_snapshot` calls `_check_encoding`. It runs on each `ok` coordinator refresh and each telemetry event, but not on option changes, cancellation, or `cooldown_elapsed`. `_check_encoding` asserts that the real helpers (`is_online`, `has_active_walk`, `pet_for_collar`, `pet_fences_enabled`, `subscription_feature_enabled`) read the payload the way the abstract `World` says.
 
 Properties, checked in `Harness.on_dispatch`, `Harness.on_success`, `_wrap_phase`, `Harness.check_uncontested`, and at the end of `Harness.run`:
 
@@ -73,9 +73,14 @@ Schedule:
 Replay the steps against `controls.py` to decide between two causes:
 
 - **Real bug.** The code really does allow that order. Report it with the schedule. Do not weaken the property or remove the environment event to make it pass, and change product code only if the user asks.
-- **Modeling error.** The harness does something the code cannot do. Examples: a fake that awaits where the real code does not, an oracle stricter than the documented rule (such as treating a rebind *before* preflight as a mapping change), or an `_check_encoding` assertion failing. Fix the harness and say so.
+- **Modeling error.** The harness does something the code cannot do. Examples: a fake that awaits where the real code does not, or an oracle stricter than the documented rule (such as treating a rebind *before* preflight as a mapping change). Fix the harness and say so.
 
-An `AssertionError` from `_check_encoding` or `settle` is always a harness problem. So is "explorer could not reach a quiescent point".
+An `AssertionError` from `settle`, or "explorer could not reach a quiescent point", is always a harness problem.
+
+An `AssertionError` from `_check_encoding` can come from either side, because it calls the production helpers. Read the failing assertion, then check two things before deciding:
+
+- **The encoding.** Does `_build_state` write the payload field the real Halo API uses for that `World` field? If not, the harness is wrong. Fix `_build_state`.
+- **The helper's contract.** Does the helper still return what its docstring and its callers expect for that payload? Check its own tests (`tests/test_extractors.py`, or `tests/test_controls.py` for `subscription_feature_enabled`) and its diff since the sync commit. If the helper changed, this is a real regression. Report it like a real bug.
 
 ## When the code changes on purpose
 
@@ -89,7 +94,7 @@ An `AssertionError` from `_check_encoding` or `settle` is always a harness probl
 
 | Check | Covers |
 |---|---|
-| P1, P2, P5 (fence) | `controls.py`: `async_set_fence_mode`, `_validate_options`, `_validate_snapshot`, `_is_confirmed`, `_async_dispatch_and_reconcile`, `control_stale_after`. `helpers.py`: `fence_disable_block_reason`, `is_online`, `pet_fences_enabled`, `has_active_walk`, `pet_for_collar`. `api.py`: `async_set_fences_enabled`, `_async_put_json`, `_async_refresh_if_needed` |
+| P1, P2, P5 (fence) | `controls.py`: `async_set_fence_mode`, `_validate_options`, `_validate_snapshot`, `_is_confirmed`, `_async_dispatch_and_reconcile`, `control_stale_after`. `helpers.py`: `fence_disable_block_reason`, `is_online`, `pet_fences_enabled`, `has_active_walk`, `pet_for_collar`. `api.py`: `async_set_fences_enabled`, `_async_put_json`, `_async_refresh_if_needed`. Not explored: unknown fence mode. `World.fences_on` is always a bool, so the explorer never reaches the "Halo has not reported current fence mode" refusal. No transaction-level test covers it either. `tests/test_extractors.py` checks only that `fence_disable_block_reason` returns it |
 | P1, P2, P4, P5 (find) | `controls.py`: `async_find_collar`, `_validate_find_options`, `_validate_find_snapshot`, `_ensure_find_cooldown_clear`, `find_collar_cooldown_remaining`, `_async_dispatch_find_and_refresh`. `helpers.py`: `subscription_feature_enabled`, `nested`. `api.py`: `async_find_collar`, `_async_put_no_content` |
 | P8 | The same transaction paths as P1/P5. Catches a gate that refuses every press |
 | P3, P6, P7, liveness | `controls.py`: `_async_finish_committed_phase`, the `async with control_lock` blocks, the `dispatch_committed` flags |

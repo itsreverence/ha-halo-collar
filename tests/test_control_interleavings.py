@@ -30,6 +30,7 @@ from custom_components.halo_collar.const import (
     CONF_ENABLE_FENCE_CONTROLS,
     CONF_ENABLE_FIND_COLLAR,
     CONF_STALE_AFTER,
+    DEFAULT_STALE_AFTER_SECONDS,
     FIND_COLLAR_COOLDOWN_SECONDS,
 )
 from custom_components.halo_collar.controls import HaloControlError
@@ -265,7 +266,7 @@ class Harness:
         collar = self.state.collars[0]
         pet = pet_for_collar(self.state.pets, collar, self.state.collars)
         assert pet is not None and pet["id"] == w.pet_id
-        assert is_online(collar, stale_after=900) is w.fresh
+        assert is_online(collar, stale_after=DEFAULT_STALE_AFTER_SECONDS) is w.fresh
         assert has_active_walk(pet, collar) is (w.walk != "none")
         assert pet_fences_enabled(pet) is w.fences_on
         assert subscription_feature_enabled(self.state.subscription, "findcollar") is w.entitled
