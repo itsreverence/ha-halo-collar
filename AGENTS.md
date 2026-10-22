@@ -18,3 +18,4 @@ Build a public-quality Home Assistant custom integration for Halo Collar cloud t
 - Follow [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and pull-request expectations.
 - Run `uv run pytest -q`, `uv run ruff check .`, and `python -m compileall custom_components tests` before public-quality handoff.
 - Use [docs/RELEASING.md](docs/RELEASING.md) for release and brand-asset checks.
+- Before changing `controls.py`, the write path in `api.py`/`transport.py`, or how `switch.py`/`button.py` call into controls, follow [.agents/skills/verify-control-transactions/SKILL.md](.agents/skills/verify-control-transactions/SKILL.md). It is the exhaustive interleaving check and mutant proof for the guarded write transactions.
