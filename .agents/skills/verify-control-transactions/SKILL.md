@@ -54,7 +54,7 @@ uv run pytest tests/test_control_interleavings.py -q        # ~25 s, ~40k schedu
 uv run python scripts/check_control_mutants.py              # ~50 s, proves the check can fail
 ```
 
-The first command also runs inside `uv run pytest -q`. The mutant script applies each broken variant of `controls.py` in turn, expects a `Violation`, and restores the file byte for byte. Every line should read `CAUGHT`.
+The first command also runs inside `uv run pytest -q`. The mutant script copies `custom_components/`, `tests/` and `pyproject.toml` into a temporary directory and never writes to the checkout. It first runs the unmutated explorer there and stops with `BASELINE failed` unless it passes. Then it applies each broken variant of `controls.py` to the copy in turn and expects a `Violation`. Every mutant line should read `CAUGHT`. `STALE`, `MISSED` and `TIMEOUT` (no verdict within 600 s) all make it exit non-zero.
 
 ## Reading a failure
 

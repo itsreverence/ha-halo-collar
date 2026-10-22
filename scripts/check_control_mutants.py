@@ -1,9 +1,10 @@
 """Confirm the control interleaving check still fails on known-broken controls.py variants.
 
 Each mutant is a literal text replacement in custom_components/halo_collar/controls.py.
-The script applies one mutant, runs tests/test_control_interleavings.py, records the
-first violation, and restores the original file. A mutant that no longer applies means
-controls.py changed and the verification needs another look.
+The script copies the integration and tests into a temporary directory, checks that the
+unmutated explorer passes there, then applies one mutant at a time to the copy and runs
+tests/test_control_interleavings.py against it. The real checkout is only read. A mutant
+that no longer applies means controls.py changed and the verification needs another look.
 
 Run: uv run python scripts/check_control_mutants.py
 """
@@ -11,12 +12,17 @@ Run: uv run python scripts/check_control_mutants.py
 from __future__ import annotations
 
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-CONTROLS = ROOT / "custom_components" / "halo_collar" / "controls.py"
+COPIED = ("custom_components", "tests", "pyproject.toml")
+CONTROLS = Path("custom_components", "halo_collar", "controls.py")
+EXPLORER = "tests/test_control_interleavings.py"
+TIMEOUT_SECONDS = 600
 
 MUTANTS: list[tuple[str, str, str]] = [
     (
@@ -178,34 +184,67 @@ MUTANTS: list[tuple[str, str, str]] = [
 # post-preflight check already ran under it, so the recheck cannot change an outcome.
 
 
-def main() -> int:
-    original = CONTROLS.read_bytes()
-    # Git may check controls.py out with CRLF; match mutants against LF text.
-    text = original.decode("utf-8").replace("\r\n", "\n")
-    newline = "\r\n" if b"\r\n" in original else "\n"
-    missed = 0
+def _copy_tree(workdir: Path) -> None:
+    for name in COPIED:
+        source = ROOT / name
+        if source.is_dir():
+            shutil.copytree(source, workdir / name, ignore=shutil.ignore_patterns("__pycache__"))
+        else:
+            shutil.copy2(source, workdir / name)
+
+
+def _run_explorer(workdir: Path) -> subprocess.CompletedProcess[str] | None:
+    """Run the explorer in workdir without bytecode caches. None means it timed out."""
     try:
+        return subprocess.run(
+            [sys.executable, "-B", "-m", "pytest", "-p", "no:cacheprovider", "-x", "-q", EXPLORER],
+            cwd=workdir,
+            capture_output=True,
+            text=True,
+            timeout=TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        return None
+
+
+def main() -> int:
+    with tempfile.TemporaryDirectory(prefix="halo-control-mutants-") as tmp:
+        workdir = Path(tmp)
+        _copy_tree(workdir)
+        controls = workdir / CONTROLS
+        original = controls.read_bytes()
+        # Git may check controls.py out with CRLF; match mutants against LF text.
+        text = original.decode("utf-8").replace("\r\n", "\n")
+        newline = "\r\n" if b"\r\n" in original else "\n"
+
+        baseline = _run_explorer(workdir)
+        if baseline is None or baseline.returncode != 0:
+            reason = f"timed out after {TIMEOUT_SECONDS}s" if baseline is None else "failed"
+            print(f"BASELINE {reason}: the unmutated explorer must pass before mutants count")
+            if baseline is not None:
+                print(baseline.stdout[-4000:])
+                print(baseline.stderr[-4000:])
+            return 1
+        print("BASELINE passed")
+
+        missed = 0
         for name, old, new in MUTANTS:
             if text.count(old) != 1:
                 print(f"STALE   {name}: mutant text no longer matches controls.py")
                 missed += 1
                 continue
-            mutated = text.replace(old, new).replace("\n", newline)
-            CONTROLS.write_bytes(mutated.encode("utf-8"))
-            result = subprocess.run(
-                [sys.executable, "-m", "pytest", "-x", "-q", "tests/test_control_interleavings.py"],
-                cwd=ROOT,
-                capture_output=True,
-                text=True,
-            )
+            controls.write_bytes(text.replace(old, new).replace("\n", newline).encode("utf-8"))
+            result = _run_explorer(workdir)
+            if result is None:
+                print(f"TIMEOUT {name}: no verdict after {TIMEOUT_SECONDS}s")
+                missed += 1
+                continue
             found = re.search(r"Violation: (\[[^\]]+\] .+)", result.stdout)
             if result.returncode != 0 and found:
                 print(f"CAUGHT  {name}: {found.group(1)}")
             else:
                 print(f"MISSED  {name}")
                 missed += 1
-    finally:
-        CONTROLS.write_bytes(original)
     return 1 if missed else 0
 
 
