@@ -449,7 +449,7 @@ class HaloApiClient:
             except (TimeoutError, aiohttp.ClientError, ValueError) as err:
                 last_error = err
                 if attempt == attempts - 1:
-                    raise HaloApiError(f"GET {path} failed: {type(err).__name__}") from err
+                    raise HaloApiError(f"GET {path} failed: {type(err).__name__}: {err}") from err
                 continue
             finally:
                 release = getattr(response, "release", None)
@@ -525,7 +525,7 @@ class HaloApiClient:
         except HaloApiError:
             raise
         except (TimeoutError, aiohttp.ClientError) as err:
-            raise HaloApiError(f"Token request failed: {type(err).__name__}") from err
+            raise HaloApiError(f"Token request failed: {type(err).__name__}: {err}") from err
         except ValueError as err:
             if response is not None and 400 <= response.status < 500:
                 raise HaloAuthError(
