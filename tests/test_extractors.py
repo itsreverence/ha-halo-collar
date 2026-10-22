@@ -38,7 +38,6 @@ from custom_components.halo_collar.helpers import (
     redact,
     reported_activity_options,
     reporting_issue,
-    sensor_values,
 )
 
 
@@ -601,39 +600,6 @@ def test_malformed_telemetry_timestamps_fail_closed_without_exceptions():
         )
 
 
-def test_sensor_extractors_cover_live_payload_shape():
-    collar = {
-        "firmware": {"formattedVersion": "03.06.64"},
-        "petInfo": {"telemetry": {"gpsAccuracyInMeters": 10.01, "gpsAccuracyStatus": "indoors"}},
-        "telemetry": {
-            "batteryChargePercent": 80,
-            "batteryStatus": "notcharged",
-            "remainingBatteryLifetimeInSeconds": 117411,
-            "currentAdapter": "wifi",
-            "wiFi": {"status": "socketconnected", "signalStrength": -70},
-            "cellular": {"status": "disconnected", "signalStrength": -87},
-        },
-    }
-    values = sensor_values(collar)
-
-    assert values["battery"] == 80
-    assert values["battery_status"] == "Not charging"
-    assert values["remaining_battery_lifetime"] == 32.6
-    assert values["current_adapter"] == "Wi-Fi"
-    assert values["wifi_status"] == "Connected"
-    assert values["cellular_signal"] == -87
-    assert values["gps_accuracy_status"] == "Indoors"
-    assert values["firmware"] == "03.06.64"
-
-
-def test_sensor_extractors_fail_soft_when_telemetry_container_is_malformed():
-    values = sensor_values({"telemetry": ["unexpected", {"private": "value"}]})
-
-    assert values["battery"] is None
-    assert values["last_telemetry"] is None
-    assert values["wifi_status"] is None
-
-
 def test_online_uses_manifest_timestamp_freshness():
     collar = {"telemetry": {"manifest": {"timestamp": datetime.now(UTC).isoformat()}}}
 
@@ -662,7 +628,6 @@ def test_last_telemetry_parses_manifest_timestamp():
     collar = {"telemetry": {"manifest": {"timestamp": "2026-07-06T12:00:00Z"}}}
 
     assert last_telemetry(collar) == datetime(2026, 7, 6, 12, 0, tzinfo=UTC)
-    assert sensor_values(collar)["last_telemetry"] == datetime(2026, 7, 6, 12, 0, tzinfo=UTC)
     assert last_telemetry({}) is None
 
 

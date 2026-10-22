@@ -825,6 +825,58 @@ async def test_reported_activity_translations_match_enum_options(hass):
     assert client.writes == client.finds == []
 
 
+async def test_runtime_telemetry_sensors_read_live_payload_shape(hass):
+    state = _state()
+    collar = state.collars[0]
+    reported = datetime.now(UTC).replace(microsecond=0)
+    collar["firmware"] = {"formattedVersion": "03.06.64"}
+    collar["petInfo"]["telemetry"].update(
+        {"gpsAccuracyInMeters": 10.01, "gpsAccuracyStatus": "indoors"}
+    )
+    collar["telemetry"].update(
+        {
+            "manifest": {"timestamp": reported.strftime("%Y-%m-%dT%H:%M:%SZ")},
+            "batteryStatus": "notcharged",
+            "remainingBatteryLifetimeInSeconds": 117411,
+            "currentAdapter": "wifi",
+            "wiFi": {"status": "socketconnected", "signalStrength": -70},
+            "cellular": {"status": "disconnected", "signalStrength": -87},
+        }
+    )
+    client = FakeHaloClient(state)
+    entry = _entry({CONF_ENABLE_FENCE_CONTROLS: False})
+    entry.add_to_hass(hass)
+
+    await _setup(hass, entry, client)
+
+    expected = {
+        "battery_status": "Not charging",
+        "remaining_battery_lifetime": "32.6",
+        "current_adapter": "Wi-Fi",
+        "wifi_status": "Connected",
+        "cellular_signal": "-87",
+        "gps_accuracy_status": "Indoors",
+        "firmware": "03.06.64",
+        "last_telemetry": reported.isoformat(),
+    }
+    assert {
+        key: _state_for_unique_id(hass, "sensor", f"collar-1_{key}").state for key in expected
+    } == expected
+
+
+async def test_runtime_telemetry_sensors_are_unknown_when_telemetry_is_malformed(hass):
+    state = _state()
+    state.collars[0]["telemetry"] = ["unexpected", {"private": "value"}]
+    client = FakeHaloClient(state)
+    entry = _entry({CONF_ENABLE_FENCE_CONTROLS: False})
+    entry.add_to_hass(hass)
+
+    await _setup(hass, entry, client)
+
+    for key in ("battery", "wifi_status", "last_telemetry"):
+        assert _state_for_unique_id(hass, "sensor", f"collar-1_{key}").state == STATE_UNKNOWN
+
+
 async def test_present_tense_telemetry_is_unknown_while_connectivity_is_off(hass):
     state = _state()
     state.pets[0]["telemetry"]["activityType"] = 2

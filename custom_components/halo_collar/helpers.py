@@ -604,25 +604,3 @@ def collar_hardware_issue(collar: dict[str, Any]) -> bool | None:
 
 def firmware_update_available(collar: dict[str, Any]) -> bool | None:
     return authoritative_bool(nested(collar, "hasFirmwareUpdatesAvailable"))
-
-
-def sensor_values(collar: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "battery": telemetry(collar, "batteryChargePercent"),
-        "battery_status": pretty_status(telemetry(collar, "batteryStatus")),
-        "remaining_battery_lifetime": seconds_to_hours(
-            telemetry(collar, "remainingBatteryLifetimeInSeconds")
-        ),
-        "current_adapter": pretty_status(telemetry(collar, "currentAdapter")),
-        "wifi_status": pretty_status(nested(collar, "telemetry", "wiFi", "status")),
-        "wifi_signal": nested(collar, "telemetry", "wiFi", "signalStrength"),
-        "cellular_status": pretty_status(nested(collar, "telemetry", "cellular", "status")),
-        "cellular_signal": nested(collar, "telemetry", "cellular", "signalStrength"),
-        "gps_accuracy": nested(collar, "petInfo", "telemetry", "gpsAccuracyInMeters"),
-        "gps_accuracy_status": pretty_status(
-            nested(collar, "petInfo", "telemetry", "gpsAccuracyStatus")
-        ),
-        "safety_status": pretty_status(nested(collar, "petInfo", "safetyStatus")),
-        "firmware": nested(collar, "firmware", "formattedVersion"),
-        "last_telemetry": last_telemetry(collar),
-    }
