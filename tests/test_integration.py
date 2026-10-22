@@ -87,6 +87,10 @@ class FakeHaloClient:
         if pre_dispatch is not None:
             pre_dispatch()
         self.writes.append((pet_id, enabled))
+        self.state = deepcopy(self.state)
+        for pet in self.state.pets:
+            if pet["id"] == pet_id:
+                pet["telemetry"]["mode"]["fencesOn"] = enabled
         return {"ok": True}
 
     async def async_find_collar(self, collar_id, *, pre_dispatch=None):
@@ -457,6 +461,63 @@ async def test_find_collar_button_is_opt_in_and_dispatches_one_synthetic_command
     assert hass.states.get(entity_id).state != STATE_UNAVAILABLE
     assert client.fetches == 3
     assert _state_for_unique_id(hass, "sensor", "collar-1_find_collar_status").state == "ready"
+
+
+@pytest.mark.parametrize(("service", "enabled"), [("turn_on", True), ("turn_off", False)])
+async def test_fence_switch_writes_requested_mode_and_shows_confirmed_state(hass, service, enabled):
+    state = _state()
+    state.pets[0]["telemetry"]["mode"]["fencesOn"] = not enabled
+    client = FakeHaloClient(state)
+    entry = _entry({CONF_ALLOW_FENCE_DISABLE: True})
+    entry.add_to_hass(hass)
+    await _setup(hass, entry, client)
+    before, after = (STATE_OFF, STATE_ON) if enabled else (STATE_ON, STATE_OFF)
+    assert hass.states.get("switch.cowboy_fence_mode").state == before
+
+    await hass.services.async_call(
+        "switch", service, {"entity_id": "switch.cowboy_fence_mode"}, blocking=True
+    )
+    await hass.async_block_till_done()
+
+    assert client.writes == [("pet-1", enabled)]
+    assert hass.states.get("switch.cowboy_fence_mode").state == after
+
+
+async def test_fence_switch_turn_off_during_active_walk_is_refused_without_a_write(hass):
+    client = FakeHaloClient(_state())
+    entry = _entry({CONF_ALLOW_FENCE_DISABLE: True})
+    entry.add_to_hass(hass)
+    await _setup(hass, entry, client)
+    client.state = deepcopy(client.state)
+    telemetry = client.state.collars[0]["telemetry"]
+    telemetry["walk"] = {"startTime": telemetry["manifest"]["timestamp"]}
+
+    with pytest.raises(HomeAssistantError, match="active walk"):
+        await hass.services.async_call(
+            "switch", "turn_off", {"entity_id": "switch.cowboy_fence_mode"}, blocking=True
+        )
+    await hass.async_block_till_done()
+
+    assert client.writes == []
+    assert hass.states.get("switch.cowboy_fence_mode").state == STATE_ON
+
+
+async def test_enable_fences_button_writes_enable_and_shows_confirmed_state(hass):
+    state = _state()
+    state.pets[0]["telemetry"]["mode"]["fencesOn"] = False
+    client = FakeHaloClient(state)
+    entry = _entry({})
+    entry.add_to_hass(hass)
+    await _setup(hass, entry, client)
+    assert hass.states.get("binary_sensor.cowboy_fences_enabled").state == STATE_OFF
+
+    await hass.services.async_call(
+        "button", "press", {"entity_id": "button.cowboy_enable_fences"}, blocking=True
+    )
+    await hass.async_block_till_done()
+
+    assert client.writes == [("pet-1", True)]
+    assert hass.states.get("binary_sensor.cowboy_fences_enabled").state == STATE_ON
 
 
 @pytest.mark.parametrize(
