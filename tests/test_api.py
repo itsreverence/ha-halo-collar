@@ -992,10 +992,10 @@ async def test_raises_api_error_after_exhausting_retries():
 
 @pytest.mark.asyncio
 async def test_timeouts_are_wrapped_as_api_errors():
-    session = SequencedSession([TimeoutError("timed out")])
+    session = SequencedSession([TimeoutError()])
     client = _new_client(session)
 
-    with pytest.raises(HaloApiError):
+    with pytest.raises(HaloApiError, match=r"^GET /pet/my failed: TimeoutError$"):
         await client.async_get("/pet/my")
     assert len(session.gets) == 3
 

@@ -475,14 +475,14 @@ async def _malformed_status_line_server():
 
 
 @pytest.mark.parametrize(
-    ("request_kind", "header_in_repr"),
+    ("request_kind", "header_in_repr", "secret"),
     [
-        ("get", "Bearer synthetic-access"),
-        ("token", "Halo-Client"),
+        ("get", "Bearer synthetic-access", "synthetic-access"),
+        ("token", "Halo-Client", "synthetic-client"),
     ],
 )
 async def test_transport_error_message_omits_request_headers(
-    monkeypatch, request_kind, header_in_repr
+    monkeypatch, request_kind, header_in_repr, secret
 ):
     monkeypatch.setattr(halo_api, "RETRY_BACKOFF_SECONDS", (0.0, 0.0))
     async with (
@@ -502,4 +502,6 @@ async def test_transport_error_message_omits_request_headers(
     message = str(raised.value)
     assert "Authorization" not in message
     assert "Halo-Client" not in message
-    assert "synthetic-access" not in message
+    assert secret in repr(cause)
+    assert secret not in message
+    assert "ClientResponseError: 400" in message
