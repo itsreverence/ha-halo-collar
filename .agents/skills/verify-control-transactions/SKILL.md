@@ -88,7 +88,7 @@ An `AssertionError` from `_check_encoding` can come from either side, because it
 - **New await point in the write path** (for example, a new await before `pre_dispatch`). Make the corresponding fake park on a gate, so the explorer can interleave events there.
 - **New write surface.** It needs its own review (AGENTS.md). Add a scenario, its oracle, and mutants.
 - If `check_control_mutants.py` prints `STALE`, the mutant text no longer matches `controls.py`. Rewrite the mutant against the new code so it breaks the same guard. Do not just delete it.
-- If the run time grows past about a minute, lower a scenario's `budget` or trim its `env` tuple, and record the new bound here.
+- If the explorer (`tests/test_control_interleavings.py`) grows past about a minute, lower a scenario's `budget` or trim its `env` tuple, and record the new bound here.
 
 ## Coverage record
 
@@ -106,12 +106,12 @@ CI enforces both commands. The `tests` job runs the explorer, and the `control-m
 
 CI cannot tell whether the harness still models the code. A fake can drift from the real transport, or an oracle from the documented rule, while every mutant stays `CAUGHT`. The sync commit marks where a person last checked that.
 
-**Sync commit:** `5c6b1cf84688b601514028b14fc561d63243318f`. The harness and this record were last confirmed to describe the covered files at this commit.
+**Sync commit:** `b8c4e97a2efd069f335d816dd2bdf5ee38d6619c`. The harness and this record were last confirmed to describe the covered files at this commit.
 
 To see whether model fidelity needs another review:
 
 ```bash
-git diff --stat 5c6b1cf84688b601514028b14fc561d63243318f -- custom_components/halo_collar/controls.py custom_components/halo_collar/api.py custom_components/halo_collar/transport.py custom_components/halo_collar/helpers.py custom_components/halo_collar/entity.py custom_components/halo_collar/switch.py custom_components/halo_collar/button.py
+git diff --stat b8c4e97a2efd069f335d816dd2bdf5ee38d6619c -- custom_components/halo_collar/controls.py custom_components/halo_collar/api.py custom_components/halo_collar/transport.py custom_components/halo_collar/helpers.py custom_components/halo_collar/entity.py custom_components/halo_collar/switch.py custom_components/halo_collar/button.py custom_components/halo_collar/const.py
 ```
 
 If that diff is not empty, read it and confirm (or update) that the fakes, gates, oracles, and this coverage table still describe the code. Then move the sync commit forward.

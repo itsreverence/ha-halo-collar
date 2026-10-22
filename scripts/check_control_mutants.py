@@ -244,6 +244,8 @@ def main() -> int:
                 print(f"CAUGHT  {name}: {found.group(1)}")
             else:
                 print(f"MISSED  {name}")
+                print(result.stdout[-2000:])
+                print(result.stderr[-2000:])
                 missed += 1
     return 1 if missed else 0
 
