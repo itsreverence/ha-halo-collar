@@ -97,12 +97,16 @@ An `AssertionError` from `_check_encoding` or `settle` is always a harness probl
 
 Equivalent mutant, intentionally not listed: removing `_ensure_find_cooldown_clear` from `validate_and_commit_dispatch`. Every writer to `cooldowns` holds the same entry lock, and the post-preflight check already ran under it.
 
-**Sync commit:** `2d36c6a389eeb06cd4d366deaf0b4ca422a39786` (v0.7.7). The harness and this record were last confirmed to describe the covered files at this commit.
+CI enforces both commands. The `tests` job runs the explorer, and the `control-mutants` job in `.github/workflows/lint.yml` fails on a failed baseline or any `STALE`, `MISSED` or `TIMEOUT` mutant.
 
-To see whether the verification needs another look:
+CI cannot tell whether the harness still models the code. A fake can drift from the real transport, or an oracle from the documented rule, while every mutant stays `CAUGHT`. The sync commit marks where a person last checked that.
+
+**Sync commit:** `67fa37eefa1d03e9dd50fb64d73b3503c44bdece`. The harness and this record were last confirmed to describe the covered files at this commit.
+
+To see whether model fidelity needs another review:
 
 ```bash
-git diff --stat 2d36c6a389eeb06cd4d366deaf0b4ca422a39786 -- custom_components/halo_collar/controls.py custom_components/halo_collar/api.py custom_components/halo_collar/transport.py custom_components/halo_collar/helpers.py custom_components/halo_collar/entity.py custom_components/halo_collar/switch.py custom_components/halo_collar/button.py
+git diff --stat 67fa37eefa1d03e9dd50fb64d73b3503c44bdece -- custom_components/halo_collar/controls.py custom_components/halo_collar/api.py custom_components/halo_collar/transport.py custom_components/halo_collar/helpers.py custom_components/halo_collar/entity.py custom_components/halo_collar/switch.py custom_components/halo_collar/button.py
 ```
 
-Move the sync commit forward only after you have read the diff, confirmed (or updated) that the fakes, gates, oracles, and this coverage table still describe the code at the new commit, and seen both commands above pass with every mutant `CAUGHT`. A green test run alone is not enough.
+If that diff is not empty, read it and confirm (or update) that the fakes, gates, oracles, and this coverage table still describe the code. Then move the sync commit forward.
