@@ -1236,6 +1236,93 @@ async def test_runtime_tracker_uses_home_zone_when_halo_reports_indoor_wifi(hass
     assert tracker.state == "home"
 
 
+@pytest.mark.parametrize(
+    ("breach", "attributes"),
+    [
+        pytest.param(
+            {"fenceName": "Synthetic Fence", "direction": "exit"},
+            {"fenceName": "Synthetic Fence", "direction": "exit"},
+            id="dict",
+        ),
+        pytest.param("synthetic-breach", {"detail": "synthetic-breach"}, id="scalar"),
+    ],
+)
+async def test_fence_breach_event_fires_once_per_new_breach(hass, freezer, breach, attributes):
+    state = _state()
+    telemetry = state.collars[0]["telemetry"]
+    earlier = {"fenceName": "Synthetic Earlier Fence"}
+    telemetry["fenceBreach"] = earlier
+    client = FakeHaloClient(state)
+    entry = _entry({})
+    entry.add_to_hass(hass)
+    await _setup(hass, entry, client)
+    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+
+    async def refresh_with(value):
+        freezer.tick(60)
+        telemetry["fenceBreach"] = value
+        await coordinator.async_refresh()
+        await hass.async_block_till_done()
+        return hass.states.get("event.cowboy_fence_breach_event")
+
+    assert hass.states.get("event.cowboy_fence_breach_event").state == STATE_UNKNOWN
+    assert (await refresh_with(deepcopy(earlier))).state == STATE_UNKNOWN
+
+    fired = await refresh_with(breach)
+    assert fired.state != STATE_UNKNOWN
+    assert fired.attributes["event_type"] == "fence_breach"
+    assert {key: fired.attributes.get(key) for key in attributes} == attributes
+
+    repeated = await refresh_with(deepcopy(breach))
+    assert (repeated.state, repeated.attributes) == (fired.state, fired.attributes)
+
+    cleared = await refresh_with(None)
+    assert (cleared.state, cleared.attributes) == (fired.state, fired.attributes)
+
+
+@pytest.mark.parametrize(
+    ("pet_info", "expected_state", "expected"),
+    [
+        pytest.param(
+            {
+                "location": {"latitude": 12.5, "longitude": -45.25},
+                "lastLocation": {"latitude": -7.75, "longitude": 101.5},
+            },
+            "not_home",
+            {"latitude": 12.5, "longitude": -45.25, "gps_accuracy": 5.0},
+            id="location",
+        ),
+        pytest.param(
+            {"location": None, "lastLocation": {"latitude": -7.75, "longitude": 101.5}},
+            "not_home",
+            {"latitude": -7.75, "longitude": 101.5, "gps_accuracy": 5.0},
+            id="last-location",
+        ),
+        pytest.param({}, STATE_UNKNOWN, {}, id="none"),
+    ],
+)
+async def test_runtime_tracker_reports_current_or_last_known_coordinates(
+    hass, pet_info, expected_state, expected
+):
+    state = _state()
+    collar_pet_info = state.collars[0]["petInfo"]
+    collar_pet_info.pop("location")
+    collar_pet_info.update(pet_info)
+    client = FakeHaloClient(state)
+    entry = _entry({})
+    entry.add_to_hass(hass)
+
+    await _setup(hass, entry, client)
+
+    tracker = hass.states.get("device_tracker.cowboy")
+    coordinates = {
+        key: tracker.attributes[key]
+        for key in ("latitude", "longitude", "gps_accuracy")
+        if key in tracker.attributes
+    }
+    assert (tracker.state, coordinates) == (expected_state, expected)
+
+
 async def test_runtime_reload_preserves_domain_lock_and_revokes_disable_surface(hass):
     client = FakeHaloClient(_state())
     entry = _entry({})
