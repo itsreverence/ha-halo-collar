@@ -156,6 +156,22 @@ MUTANTS: list[tuple[str, str, str]] = [
             dispatch_committed = True""",
         """            dispatch_committed = True""",
     ),
+    (
+        "fence refuses every press",
+        '''    """Fail closed unless the current snapshot is safe for this exact target."""
+''',
+        '''    """Fail closed unless the current snapshot is safe for this exact target."""
+    raise HaloControlError("refuse")
+''',
+    ),
+    (
+        "find refuses every press",
+        '''    """Fail closed unless Find Collar is safe for one exact current mapping."""
+''',
+        '''    """Fail closed unless Find Collar is safe for one exact current mapping."""
+    raise HaloControlError("refuse")
+''',
+    ),
 ]
 # Not listed: removing _ensure_find_cooldown_clear from validate_and_commit_dispatch is
 # an equivalent mutant. Every cooldowns writer holds the same entry lock, and the

@@ -7,9 +7,9 @@ description: Exhaustively check the guarded write transactions (fence mode and F
 
 ## What this checks
 
-**Property.** Every fence-mode or Find collar PUT is sent at most once per press. It is sent only while every opt-in, freshness, mapping, walk, sync, entitlement, and cooldown gate holds on the current snapshot. It never overlaps another press's dispatch or reconciliation, even when the caller is cancelled. A press reports success only after reported-state confirmation (fence) or an unambiguous provider success (Find collar).
+**Property.** Every fence-mode or Find collar PUT is sent at most once per press. It is sent only while every opt-in, freshness, mapping, walk, sync, entitlement, and cooldown gate holds on the current snapshot. It never overlaps another press's dispatch or reconciliation, even when the caller is cancelled. A press reports success only after reported-state confirmation (fence) or an unambiguous provider success (Find collar). A valid press with nothing contending with it succeeds.
 
-**Harm if broken.** Home Assistant could disable a dog's containment during a walk, after the user revoked the opt-in, or for a dog the collar no longer belongs to. It could also replay a physical command, or report success that the collar never confirmed.
+**Harm if broken.** Home Assistant could disable a dog's containment during a walk, after the user revoked the opt-in, or for a dog the collar no longer belongs to. It could also replay a physical command, or report success that the collar never confirmed. A transaction that refuses every press would pass every safety property and leave the opted-in controls unusable.
 
 ## How it works
 
@@ -23,7 +23,7 @@ description: Exhaustively check the guarded write transactions (fence mode and F
 
 A stateless DFS enumerates every choice: which parked gate to release, each gate's outcome, and up to `budget` environment events. The events are option revocations, `stale_after` tightening, stale telemetry, active or unknown walk, fences unsynced, collar rebound to another pet, one-sided mapping, entitlement lost, fences flipped in the official app, cooldown elapsed, and cancelling a press. Cancellation can be a separate step, or land in the same loop tick as a gate completing (in either order). Environment changes reach the snapshot through a modeled background refresh. Every event calls `_check_encoding`, which asserts that the real helpers (`is_online`, `has_active_walk`, `pet_for_collar`, `pet_fences_enabled`, `subscription_feature_enabled`) read the payload the way the abstract `World` says.
 
-Properties, checked in `Harness.on_dispatch`, `Harness.on_success`, `_wrap_phase`, and at the end of `Harness.run`:
+Properties, checked in `Harness.on_dispatch`, `Harness.on_success`, `_wrap_phase`, `Harness.check_uncontested`, and at the end of `Harness.run`:
 
 - **P1 gates at dispatch.** At the instant the PUT starts, every gate holds on the current snapshot and current `entry.options`. The pet/collar mapping also matches this press's preflight refresh.
 - **P2 at most once.** A press dispatches at most one PUT, so an ambiguous result is never replayed.
@@ -33,6 +33,7 @@ Properties, checked in `Harness.on_dispatch`, `Harness.on_success`, `_wrap_phase
 - **P6 no orphans.** No PUT after the press's caller has already returned.
 - **P7 reconcile survives cancellation.** Once dispatched, the reconcile phase never ends in `CancelledError`.
 - **Liveness.** Every press finishes, the lock is released, and no dispatch phase is left running.
+- **P8 uncontested success.** On the schedule where every choice is index 0 (token valid, each gate released in order with its first outcome `ok`, no environment event, no cancellation), each press ends with its scenario's `uncontested` result. `success` means it returned normally after exactly one dispatch. `refused` means `HaloControlError` with no dispatch, as for the second Find inside the cooldown.
 
 Scenarios (`SCENARIOS`): `enable`, `disable`, `find` (one press, budget 2), `find+find` (budget 2), `disable+find`, `disable+enable` (budget 1).
 
@@ -90,6 +91,7 @@ An `AssertionError` from `_check_encoding` or `settle` is always a harness probl
 |---|---|
 | P1, P2, P5 (fence) | `controls.py`: `async_set_fence_mode`, `_validate_options`, `_validate_snapshot`, `_is_confirmed`, `_async_dispatch_and_reconcile`, `control_stale_after`. `helpers.py`: `fence_disable_block_reason`, `is_online`, `pet_fences_enabled`, `has_active_walk`, `pet_for_collar`. `api.py`: `async_set_fences_enabled`, `_async_put_json`, `_async_refresh_if_needed` |
 | P1, P2, P4, P5 (find) | `controls.py`: `async_find_collar`, `_validate_find_options`, `_validate_find_snapshot`, `_ensure_find_cooldown_clear`, `find_collar_cooldown_remaining`, `_async_dispatch_find_and_refresh`. `helpers.py`: `subscription_feature_enabled`, `nested`. `api.py`: `async_find_collar`, `_async_put_no_content` |
+| P8 | The same transaction paths as P1/P5. Catches a gate that refuses every press |
 | P3, P6, P7, liveness | `controls.py`: `_async_finish_committed_phase`, the `async with control_lock` blocks, the `dispatch_committed` flags |
 | Fake fidelity | `transport.py`: `HaloWriteTransport.put` (pre_dispatch immediately before `session.put`). `entity.py`: `HaloEntity.pet` / `collar` (mirrored by `state_getter`). `switch.py` / `button.py` pass `self.pet` / `self.collar` / `coordinator.data.subscription` |
 

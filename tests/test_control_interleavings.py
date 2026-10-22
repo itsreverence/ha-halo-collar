@@ -188,6 +188,8 @@ class FakeWriteTransport:
 class Scenario:
     name: str
     presses: tuple[str, ...]  # each "enable" | "disable" | "find"
+    # Per press, "success" or "refused" on the schedule where every choice is index 0.
+    uncontested: tuple[str, ...]
     env: tuple[str, ...]
     budget: int
     initial_fences_on: bool = True
@@ -386,7 +388,9 @@ class Harness:
                     state_getter=state_getter,
                     enabled=action == "enable",
                 )
-        except (HaloApiError, HaloControlError) as err:
+        except HaloControlError as err:
+            self.results[txn] = f"refused: {err}"
+        except HaloApiError as err:
             self.results[txn] = f"error: {err}"
         except asyncio.CancelledError:
             self.results[txn] = "cancelled"
@@ -487,6 +491,19 @@ class Harness:
             self.fail("control lock still held after every press finished")
         if self.in_dispatch_phase:
             self.fail("a dispatch phase was still running after every press finished")
+        if all(choice == 0 for choice, _ in self.trace):
+            self.check_uncontested()
+
+    def check_uncontested(self) -> None:
+        """Valid presses must work when nothing contends with them."""
+        for txn, expected in enumerate(self.scenario.uncontested, start=1):
+            result = self.results[txn].partition(":")[0]
+            dispatched = sum(d.txn == txn for d in self.dispatches)
+            if (result, dispatched) != (expected, int(expected == "success")):
+                self.fail(
+                    f"uncontested txn{txn} expected {expected}, got {self.results[txn]}"
+                    f" after {dispatched} dispatches"
+                )
 
 
 _ACTIVE: list[Harness] = []
@@ -553,16 +570,18 @@ FENCE_ENV = (
     "fences_flipped_elsewhere",
 )
 SCENARIOS = [
-    Scenario("enable", ("enable",), FENCE_ENV, budget=2, initial_fences_on=False),
+    Scenario("enable", ("enable",), ("success",), FENCE_ENV, budget=2, initial_fences_on=False),
     Scenario(
         "disable",
         ("disable",),
+        ("success",),
         FENCE_ENV + ("revoke_disable", "walk_active", "walk_unknown", "fences_unsynced"),
         budget=2,
     ),
     Scenario(
         "find",
         ("find",),
+        ("success",),
         (
             "revoke_find",
             "tighten_stale_after",
@@ -575,9 +594,19 @@ SCENARIOS = [
         ),
         budget=2,
     ),
-    Scenario("find+find", ("find", "find"), ("cooldown_elapsed",), budget=2),
-    Scenario("disable+find", ("disable", "find"), ("walk_active",), budget=1),
-    Scenario("disable+enable", ("disable", "enable"), ("fences_flipped_elsewhere",), budget=1),
+    Scenario(
+        "find+find", ("find", "find"), ("success", "refused"), ("cooldown_elapsed",), budget=2
+    ),
+    Scenario(
+        "disable+find", ("disable", "find"), ("success", "success"), ("walk_active",), budget=1
+    ),
+    Scenario(
+        "disable+enable",
+        ("disable", "enable"),
+        ("success", "success"),
+        ("fences_flipped_elsewhere",),
+        budget=1,
+    ),
 ]
 
 
