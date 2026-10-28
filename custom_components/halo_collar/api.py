@@ -464,7 +464,8 @@ class HaloApiClient:
             if status in RETRYABLE_STATUS and attempt < attempts - 1:
                 continue
             return status, payload
-        raise AssertionError(f"unreachable after GET failure: {_error_text(last_error)}")
+        detail = _error_text(last_error) if last_error is not None else "no error recorded"
+        raise AssertionError(f"unreachable after GET failure: {detail}")
 
     async def _async_refresh_if_needed(self) -> None:
         if self._token_needs_refresh():
