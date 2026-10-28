@@ -22,7 +22,7 @@ ROOT = Path(__file__).resolve().parent.parent
 COPIED = ("custom_components", "tests", "pyproject.toml")
 CONTROLS = Path("custom_components", "halo_collar", "controls.py")
 EXPLORER = "tests/test_control_interleavings.py"
-TIMEOUT_SECONDS = 600
+TIMEOUT_SECONDS = 90
 
 MUTANTS: list[tuple[str, str, str]] = [
     (

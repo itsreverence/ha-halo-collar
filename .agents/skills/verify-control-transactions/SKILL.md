@@ -54,7 +54,7 @@ uv run pytest tests/test_control_interleavings.py -q        # ~15 s, ~36k schedu
 uv run python scripts/check_control_mutants.py              # ~1.5 to 3 min, proves the check can fail
 ```
 
-The first command also runs inside `uv run pytest -q`. The mutant script copies `custom_components/`, `tests/` and `pyproject.toml` into a temporary directory and never writes to the checkout. It first runs the unmutated explorer there and stops with `BASELINE failed` unless it passes. Then it applies each broken variant of `controls.py` to the copy in turn and expects a `Violation`. Every mutant line should read `CAUGHT`. `STALE`, `MISSED` and `TIMEOUT` (no verdict within 600 s) all make it exit non-zero.
+The first command also runs inside `uv run pytest -q`. The mutant script copies `custom_components/`, `tests/` and `pyproject.toml` into a temporary directory and never writes to the checkout. It first runs the unmutated explorer there and stops with `BASELINE failed` unless it passes. Then it applies each broken variant of `controls.py` to the copy in turn and expects a `Violation`. Every mutant line should read `CAUGHT`. `STALE`, `MISSED` and `TIMEOUT` (no verdict within 90 s, about five times a normal run) all make it exit non-zero. The CI job is capped at 30 minutes, which fits the baseline plus 18 mutants even if every run times out. CI runs the script with `python -u` so a cancelled job still shows each verdict printed so far.
 
 ## Reading a failure
 
@@ -106,12 +106,12 @@ CI enforces both commands. The `tests` job runs the explorer, and the `control-m
 
 CI cannot tell whether the harness still models the code. A fake can drift from the real transport, or an oracle from the documented rule, while every mutant stays `CAUGHT`. The sync commit marks where a person last checked that.
 
-**Sync commit:** `b8c4e97a2efd069f335d816dd2bdf5ee38d6619c`. The harness and this record were last confirmed to describe the covered files at this commit.
+**Sync commit:** `259efa50904480de90999c8a320bfbefb34c5b51`. The harness and this record were last confirmed to describe the covered files at this commit.
 
 To see whether model fidelity needs another review:
 
 ```bash
-git diff --stat b8c4e97a2efd069f335d816dd2bdf5ee38d6619c -- custom_components/halo_collar/controls.py custom_components/halo_collar/api.py custom_components/halo_collar/transport.py custom_components/halo_collar/helpers.py custom_components/halo_collar/entity.py custom_components/halo_collar/switch.py custom_components/halo_collar/button.py custom_components/halo_collar/const.py
+git diff --stat 259efa50904480de90999c8a320bfbefb34c5b51 -- custom_components/halo_collar/controls.py custom_components/halo_collar/api.py custom_components/halo_collar/transport.py custom_components/halo_collar/helpers.py custom_components/halo_collar/entity.py custom_components/halo_collar/switch.py custom_components/halo_collar/button.py custom_components/halo_collar/const.py
 ```
 
 If that diff is not empty, read it and confirm (or update) that the fakes, gates, oracles, and this coverage table still describe the code. Then move the sync commit forward.
