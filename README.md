@@ -45,7 +45,18 @@ An account-level **Subscription** sensor summarizes subscription limits. Optiona
 [![Open this repository in HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=itsreverence&repository=ha-halo-collar&category=integration)
 [![Add the Halo Collar integration](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=halo_collar)
 
-### HACS
+### Marketplace (Home Assistant 2026.11 and newer)
+
+In Home Assistant 2026.11, HACS became the built-in [Marketplace](https://www.home-assistant.io/integrations/marketplace/). The Marketplace is available to administrators only. The HACS button above still works and opens the repository in the Marketplace.
+
+1. Go to **Settings > Marketplace** and accept the warning shown on first use.
+2. Search for **Halo Collar** and open its page.
+3. Select **Install**, check the version, then select **Install** again.
+4. Restart Home Assistant when asked, then follow [Configuration](#configuration). A Repairs entry reminds you when a restart is needed and can restart Home Assistant for you.
+
+If you installed Halo Collar through HACS before updating, the Marketplace migrates it automatically when Home Assistant starts after the update.
+
+### HACS (Home Assistant 2024.12 to 2026.10)
 
 Halo Collar is included in the [HACS default catalog](https://github.com/hacs/default). You do not need to add a custom repository.
 
@@ -107,7 +118,7 @@ Changing a control option reloads the integration. Revoked controls and their ma
 
 ## Troubleshooting
 
-- Restart Home Assistant after installing or updating through HACS.
+- Restart Home Assistant after installing or updating through the Marketplace or HACS.
 - Complete [same-account reauthentication](SUPPORT.md#recover-authentication) if Home Assistant prompts for it.
 - For a missing control or a rejected action, use the [control troubleshooting table](SUPPORT.md#control-missing-unavailable-or-rejected).
 - Compare important location and status values with the official Halo app.
