@@ -1,4 +1,4 @@
 # Full-suite contract against the current stable Home Assistant test harness.
 # Advance deliberately with the compatibility docs and full regression suite.
-pytest-homeassistant-custom-component==0.13.373
+pytest-homeassistant==2026.11.1
 voluptuous-serialize==2.7.0

@@ -17,7 +17,7 @@ from homeassistant import config_entries
 from homeassistant.const import CONF_NAME
 from homeassistant.data_entry_flow import FlowResultType, UnknownFlow
 from homeassistant.helpers import config_validation as cv
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry
 
 from custom_components.halo_collar.api import HaloApiError, HaloAuthError
 from custom_components.halo_collar.config_flow import HaloCollarConfigFlow
