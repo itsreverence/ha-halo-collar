@@ -29,10 +29,11 @@ Tests that require Home Assistant skip when it is absent.
 
 ### Pinned Home Assistant contract
 
-Run the full Home Assistant 2026.10.2 contract separately so its dependency graph
+Run the full Home Assistant 2026.11.1 contract separately so its dependency graph
 stays out of the project lockfile. This target advances when maintainers update
 `requirements_test_ha_stable.txt`, not whenever Home Assistant releases a version.
-The requirements pin `pytest-homeassistant-custom-component==0.13.373` and
+The requirements pin the official `pytest-homeassistant==2026.11.1` harness,
+whose version matches the Home Assistant release it installs, and
 `voluptuous-serialize==2.7.0`:
 
 ```bash
@@ -55,7 +56,7 @@ Run the Home Assistant 2024.12.0 compatibility and write-transport tests separat
 uv run --isolated --python 3.12.7 \
   --with homeassistant==2024.12.0 --with josepy==1.14.0 \
   --with pytest==8.3.3 --with pytest-asyncio==0.24.0 \
-  pytest -q -p no:homeassistant-custom-component \
+  pytest -q \
   tests/test_tracker_compat.py tests/test_api_transport.py tests/test_status_compat.py \
   tests/test_telemetry_compat.py
 ```
