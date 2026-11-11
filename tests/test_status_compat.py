@@ -9,9 +9,11 @@ import pytest
 
 pytest.importorskip("homeassistant")
 
+from homeassistant import loader
+from homeassistant.config_entries import ConfigEntries
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import device_registry, entity_registry
+from homeassistant.helpers import device_registry, entity_registry, frame
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_component import EntityComponent
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
@@ -29,8 +31,13 @@ async def test_minimum_ha_dispatcher_isolates_status_listener_from_real_button_r
     tmp_path, rejected
 ):
     hass = HomeAssistant(str(tmp_path))
+    loader.async_setup(hass)
+    if hasattr(frame, "async_setup"):
+        frame.async_setup(hass)
     if hasattr(device_registry, "async_setup"):
         device_registry.async_setup(hass)
+    hass.config_entries = ConfigEntries(hass, {})
+    await hass.config_entries.async_initialize()
     await device_registry.async_load(hass)
     await entity_registry.async_load(hass)
     state = HaloState(
