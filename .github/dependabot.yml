@@ -8,10 +8,11 @@ updates:
       python-dev:
         patterns:
           - "*"
-    # This pin defines the current stable Home Assistant contract lane and is
-    # advanced deliberately after checking that it does not target an HA beta.
+    # This pin defines the current stable Home Assistant contract lane. Its
+    # version is the Home Assistant version it installs, so it advances
+    # deliberately to a stable release with the compatibility docs.
     ignore:
-      - dependency-name: pytest-homeassistant-custom-component
+      - dependency-name: pytest-homeassistant
 
   - package-ecosystem: github-actions
     directory: /

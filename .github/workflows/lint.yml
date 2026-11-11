@@ -71,7 +71,7 @@ jobs:
           --with josepy==1.14.0
           --with pytest==8.3.3
           --with pytest-asyncio==0.24.0
-          pytest -q -p no:homeassistant-custom-component
+          pytest -q
           tests/test_tracker_compat.py
           tests/test_api_transport.py
           tests/test_status_compat.py
