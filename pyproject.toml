@@ -30,6 +30,8 @@ namespaces = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+# Let Home Assistant install its httpx alias before respx is imported.
+addopts = "-p no:respx"
 testpaths = ["tests"]
 pythonpath = ["."]
 
