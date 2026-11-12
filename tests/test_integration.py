@@ -2378,6 +2378,45 @@ async def test_runtime_first_refresh_classifies_auth_and_transient_failures(
     assert client.fetches == 1
 
 
+async def test_polling_auth_failure_starts_reauth_and_marks_entities_unavailable(hass):
+    client = FakeHaloClient(_state())
+    base = _entry({})
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title=base.title,
+        unique_id=base.unique_id,
+        data={**base.data, CONF_EMAIL: base.unique_id},
+        options=base.options,
+    )
+    entry.add_to_hass(hass)
+    await _setup(hass, entry, client)
+    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    collar_id = client.state.collars[0]["id"]
+    assert _state_for_unique_id(hass, "sensor", f"{collar_id}_battery").state != STATE_UNAVAILABLE
+
+    async def expired_login():
+        client.fetches += 1
+        raise HaloAuthError("refresh token rejected")
+
+    client.async_fetch_state = expired_login
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+
+    flows = hass.config_entries.flow.async_progress_by_handler(DOMAIN)
+    assert [flow["context"]["source"] for flow in flows] == [SOURCE_REAUTH]
+    assert flows[0]["context"]["entry_id"] == entry.entry_id
+    assert flows[0]["step_id"] == "reauth_confirm"
+    assert entry.state is ConfigEntryState.LOADED
+    assert coordinator.last_update_success is False
+    assert _state_for_unique_id(hass, "sensor", f"{collar_id}_battery").state == STATE_UNAVAILABLE
+    assert client.writes == []
+    assert client.finds == []
+
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+    assert len(hass.config_entries.flow.async_progress_by_handler(DOMAIN)) == 1
+
+
 async def test_runtime_token_persistence_and_interval_updates_do_not_reload(hass):
     client = FakeHaloClient(_state())
     entry = _entry({})
