@@ -9,9 +9,10 @@ REDACTED = "**REDACTED**"
 
 REDACT_KEYS = frozenset(
     {
-        "access_token",
-        "refresh_token",
-        "client_secret",
+        "accesstoken",
+        "refreshtoken",
+        "idtoken",
+        "clientsecret",
         "password",
         "email",
         "id",
@@ -135,15 +136,23 @@ class WalkSummary(TypedDict):
     start_trigger: str | None
 
 
+def _redaction_key(key: Any) -> str | None:
+    if not isinstance(key, str):
+        return None
+    return key.lower().replace("_", "").replace("-", "")
+
+
 def redact(data: Any, keys: frozenset[str] = REDACT_KEYS) -> Any:
     """Recursively replace values of sensitive keys with '**REDACTED**'.
 
     A matching key is redacted wholesale even when its value is a container
-    (e.g. ``location: {...}``), so unknown nested key names cannot leak.
+    (e.g. ``location: {...}``), so unknown nested key names cannot leak. Keys
+    match ignoring case, ``_`` and ``-``, so ``refresh_token`` and
+    ``refreshToken`` are the same key.
     """
     if isinstance(data, dict):
         return {
-            key: (REDACTED if isinstance(key, str) and key.lower() in keys else redact(value, keys))
+            key: (REDACTED if _redaction_key(key) in keys else redact(value, keys))
             for key, value in data.items()
         }
     if isinstance(data, list):
