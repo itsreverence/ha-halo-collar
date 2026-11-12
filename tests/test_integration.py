@@ -1050,6 +1050,47 @@ async def test_runtime_walk_sensors_are_safe_and_update_after_refresh(hass):
     assert _state_for_unique_id(hass, "sensor", f"{collar_id}_last_walk_distance").state == "50.0"
 
 
+async def test_diagnostics_never_export_credentials(hass):
+    state = _state()
+    secrets = {
+        "access_token": "SECRET_SNAKE_ACCESS",
+        "refresh_token": "SECRET_SNAKE_REFRESH",
+        "accessToken": "SECRET_CAMEL_ACCESS",
+        "refreshToken": "SECRET_CAMEL_REFRESH",
+        "idToken": "SECRET_CAMEL_ID_TOKEN",
+        "clientSecret": "SECRET_CAMEL_CLIENT",
+        "password": "SECRET_PASSWORD",
+    }
+    state.collars[0]["auth"] = dict(secrets)
+    state.pets[0].update(secrets)
+    state.subscription.update(secrets)
+    client = FakeHaloClient(state)
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Halo Collar",
+        unique_id="owner@example.com",
+        data={
+            CONF_EMAIL: "owner@example.com",
+            CONF_PASSWORD: "SECRET_ENTRY_PASSWORD",
+            CONF_ACCESS_TOKEN: "SECRET_ENTRY_ACCESS",
+            CONF_REFRESH_TOKEN: "SECRET_ENTRY_REFRESH",
+            CONF_EXPIRES_AT: 4_102_444_800.0,
+            CONF_CLIENT_ID: "halo.app.android",
+            CONF_CLIENT_SECRET: "SECRET_ENTRY_CLIENT",
+        },
+        options=_entry({}).options,
+    )
+    entry.add_to_hass(hass)
+    await _setup(hass, entry, client)
+
+    serialized = json.dumps(
+        await async_get_config_entry_diagnostics(hass, entry), default=str
+    ).lower()
+
+    assert "secret_" not in serialized
+    assert "owner@example.com" not in serialized
+
+
 async def test_diagnostics_walk_history_keeps_only_scalar_pet_metrics(hass):
     walks = [
         {

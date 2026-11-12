@@ -784,6 +784,27 @@ def test_redact_is_case_insensitive_on_keys():
     assert result["scan_interval"] == 300
 
 
+def test_redact_matches_camel_case_and_hyphenated_credential_keys():
+    payload = {
+        "accessToken": "fake-access-token",
+        "refreshToken": "fake-refresh-token",
+        "idToken": "fake-id-token",
+        "clientSecret": "fake-client-secret",
+        "refresh-token": "fake-refresh-token",
+        "phoneNumber": "fake-phone",
+        "scanInterval": 300,
+        42: "non-string key",
+    }
+
+    result = redact(payload)
+
+    for key in ("accessToken", "refreshToken", "idToken", "clientSecret", "refresh-token"):
+        assert result[key] == REDACTED
+    assert result["phoneNumber"] == REDACTED
+    assert result["scanInterval"] == 300
+    assert result[42] == "non-string key"
+
+
 def test_icon_translations_target_existing_entity_translation_keys():
     integration = Path(__file__).resolve().parents[1] / "custom_components" / "halo_collar"
     icons = json.loads((integration / "icons.json").read_text())["entity"]
