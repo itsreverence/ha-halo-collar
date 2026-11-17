@@ -680,6 +680,22 @@ async def test_unsaved_registration_result_leaves_recovery_required(clock):
     assert value.status() is RecallReason.REGISTRATION_UNCERTAIN
 
 
+async def test_unsaved_ambiguous_registration_outcome_still_blocks_a_second_request(clock):
+    value = Rig(clock, None)
+    value.client.mobile_id = HaloWriteOutcomeUnknown("lost")
+    await value.load()
+    value.client.on_dispatch = lambda: setattr(value.store, "fail_saves", 1)
+
+    with pytest.raises(HaloWriteOutcomeUnknown):
+        await value.register()
+    with pytest.raises(HaloControlError):
+        await value.register()
+
+    assert len(value.client.registrations) == 1
+    assert value.store.registration["state"] == "pending"
+    assert isinstance(value.owner.registration, RegistrationPending)
+
+
 @pytest.mark.parametrize(
     ("features", "expected"),
     [

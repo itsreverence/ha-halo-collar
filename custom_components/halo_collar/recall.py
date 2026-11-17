@@ -1,11 +1,3 @@
-"""Recall whistle: the one Halo instant correction this integration can send.
-
-One RecallOwner per config entry owns the Halo mobile registration, the per-collar
-command sequence, and the cooldowns, and runs the press and registration
-transactions. It never imports Home Assistant. Callers inject storage, the
-coordinator, the client, and the entry-wide control lock.
-"""
-
 from __future__ import annotations
 
 import hashlib
@@ -140,8 +132,6 @@ _STATE_NAMES: Mapping[type, str] = {
 
 @dataclass(frozen=True, slots=True)
 class RecallTarget:
-    """The exact pet, collar, and hardware one press was authorized for."""
-
     pet_id: str
     collar_id: str
     serial: str
@@ -163,7 +153,6 @@ class RecallStore(Protocol):
 
 
 def recall_account_binding(identity: Any) -> str | None:
-    """Bind saved state to one Halo account without storing the address itself."""
     if not isinstance(identity, str) or not identity.strip():
         return None
     return hashlib.sha256(identity.strip().lower().encode()).hexdigest()
@@ -189,7 +178,6 @@ def recall_serial(state: HaloState, pet_id: str) -> str | None:
 def _resolve(
     state: HaloState, pet_id: str
 ) -> tuple[dict[str, Any], dict[str, Any], RecallTarget] | None:
-    """Require one pet, one collar, and one serial that all name each other exactly."""
     pets = [pet for pet in state.pets if pet.get("id") == pet_id]
     if len(pets) != 1:
         return None
@@ -222,11 +210,6 @@ def classify_recall(
     now: datetime,
     cooldown_remaining: Callable[[str], float],
 ) -> RecallTarget | RecallReason:
-    """The single Recall gate list.
-
-    The press calls it on fresh state at preflight and at the dispatch boundary, and only
-    those calls authorize a request. The status sensor calls it on cached state as advice.
-    """
     if not enabled:
         return RecallReason.DISABLED
     if (registration_reason := _registration_reason(registration)) is not None:
@@ -304,7 +287,6 @@ def _encode(account: str, registration: Registration) -> dict[str, Any]:
 
 
 def _decode(data: Any, account: str) -> Registration | None:
-    """Parse saved state. Anything unexpected is unusable, never a fresh start."""
     if not isinstance(data, dict) or data.get("version") != _STORAGE_VERSION:
         return None
     if data.get("account") != account or not isinstance(body := data.get("registration"), dict):
@@ -338,12 +320,6 @@ def _decode(data: Any, account: str) -> Registration | None:
 
 
 class RecallOwner:
-    """Recall state for one config entry, kept across option-triggered reloads.
-
-    Every change happens under the entry-wide control lock that fence and Find collar
-    transactions also hold, so no two physical commands of any tier overlap.
-    """
-
     def __init__(self, *, store: RecallStore, account: str | None, lock: Lock) -> None:
         self._store = store
         self._account = account
@@ -355,7 +331,6 @@ class RecallOwner:
 
     @property
     def registration(self) -> Registration | None:
-        """None until loaded, or when saved state is unreadable or belongs elsewhere."""
         return self._registration
 
     def cooldown_remaining(self, serial: str) -> float:
@@ -363,7 +338,6 @@ class RecallOwner:
         return max(0.0, deadline - time.monotonic())
 
     def status(self, state: HaloState, pet_id: str, *, entry, cloud_success: bool) -> RecallReason:
-        """Advice from cached state. A press still rereads Halo before it can send."""
         result = classify_recall(
             state,
             pet_id,
@@ -388,7 +362,6 @@ class RecallOwner:
         self._registration = await self._async_read()
         self._loaded = True
         if isinstance(self._registration, Registered):
-            # A dispatch just before a restart left no cooldown in this process.
             self._restart_hold_until = time.monotonic() + RECALL_COOLDOWN_SECONDS
 
     async def _async_read(self) -> Registration | None:
@@ -401,7 +374,6 @@ class RecallOwner:
         return Unregistered() if data is None else _decode(data, self._account)
 
     async def _async_save(self, registration: Registration) -> None:
-        """Replace the saved state, then publish it. A started write always finishes."""
         data = _encode(cast(str, self._account), registration)
 
         async def write() -> None:
@@ -500,8 +472,6 @@ class RecallOwner:
                         "Halo pet/collar mapping changed before command dispatch"
                     )
                 ensure_lifetime()
-                # Start the cooldown before transport dispatch. Even if transport fails
-                # immediately, Halo may have received the command.
                 self._cooldown_until[target.serial] = time.monotonic() + RECALL_COOLDOWN_SECONDS
                 dispatch_committed = True
 
@@ -613,7 +583,7 @@ async def _async_register_and_record(
             try:
                 await owner._async_save(outcome)
             except RecallStorageError:
-                pass  # The saved intent still blocks another registration request.
+                pass
         raise
     try:
         await owner._async_save(Registered(mobile_id))

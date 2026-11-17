@@ -37,7 +37,6 @@ async def async_get_config_entry_diagnostics(hass, entry) -> dict[str, Any]:
         "server_time": state.server_time,
         "walk_history_status": state.walk_history_status,
         "walk_history": _walk_history_diagnostics(state.walks),
-        # Export the registration state only. The mobile ID, serials, and counters stay local.
         "recall_whistle_registration": (
             "not_loaded" if recall is None else registration_state_name(recall.registration)
         ),

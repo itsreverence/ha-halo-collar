@@ -41,7 +41,6 @@ class Mutant(NamedTuple):
     old: str
     new: str
     path: Path = CONTROLS
-    # pytest -k expression naming the scenarios that must catch this mutant.
     selector: str = CONTROL_SCENARIOS
 
 
@@ -240,8 +239,8 @@ RECALL_MUTANTS = [
     Mutant(
         "recall pre_dispatch skips the lifetime check",
         """                ensure_lifetime()
-                # Start the cooldown""",
-        """                # Start the cooldown""",
+                self._cooldown_until""",
+        """                self._cooldown_until""",
         RECALL,
         RECALL_SCENARIOS,
     ),
@@ -375,11 +374,6 @@ RECALL_MUTANTS = [
         REGISTRATION_SCENARIOS,
     ),
 ]
-# Not listed:
-# - Re-reading the strictest stale_after at the Recall dispatch boundary repeats the fence
-#   and Find closure that their mutants already prove; tests/test_recall.py covers this copy.
-# - A retry that reuses the press's pre_dispatch is refused by the cooldown it just
-#   started, so the retry mutant above bypasses the callback, as a real retry bug would.
 
 RUNTIME_SCENARIOS = f"not {REGISTRATION_SCENARIOS}"
 FENCE_SCENARIOS = "able and not find and not recall"
@@ -451,10 +445,6 @@ RUNTIME_MUTANTS = [
         RECALL_SCENARIOS,
     ),
 ]
-# Not listed: dropping ensure_live_runtime from async_preflight_refresh is equivalent.
-# A reload shuts the replaced runtime's coordinator down in the same step, so a later
-# preflight fetches nothing and is refused, and a fetch already in flight is followed
-# by the dispatch-boundary recheck.
 
 TIERS: dict[str, tuple[str, list[Mutant]]] = {
     "controls": (CONTROL_SCENARIOS, [Mutant(*mutant) for mutant in CONTROL_MUTANTS]),

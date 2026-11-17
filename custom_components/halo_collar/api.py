@@ -202,15 +202,11 @@ class HaloState:
     walks: list[dict[str, Any]] = field(default_factory=list)
     # "ok", "unavailable" (timeout or error), or "unexpected_response" (unrecognized shape).
     walk_history_status: str = "ok"
-    # Monotonic time when the server_time request started. Halo's clock read that value no
-    # earlier than this, so elapsed time measured from here never overstates what is left.
     server_time_monotonic: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class HaloRecallCommand:
-    """One Recall whistle. There is deliberately no correction-type field."""
-
     mobile_id: int
     command_number: int
     expires_at: datetime
@@ -461,7 +457,6 @@ class HaloApiClient:
         return await self._async_write_json("PUT", path, payload, pre_dispatch=pre_dispatch)
 
     async def async_get_recall_window(self) -> timedelta:
-        """Read how long Halo keeps a positive correction such as the Recall whistle."""
         try:
             async with asyncio.timeout(RECALL_WINDOW_TIMEOUT_SECONDS):
                 configuration = await self.async_get("/configuration")

@@ -1,5 +1,3 @@
-"""Home Assistant wiring for the Recall owner: its private state file and its registry."""
-
 from __future__ import annotations
 
 import json
@@ -44,8 +42,6 @@ def recall_dogs(hass, entry, state: HaloState) -> dict[str, dict[str, Any] | Non
 
 
 class RecallFileStore:
-    """One private file per entry, replaced atomically and outside diagnostics."""
-
     def __init__(self, hass, entry_id: str) -> None:
         self._hass = hass
         self._path = Path(hass.config.path(STORAGE_DIR, f"{DOMAIN}.recall.{entry_id}"))
@@ -67,7 +63,6 @@ class RecallFileStore:
         except (OSError, ValueError) as err:
             raise RecallStorageError("Recall state could not be read") from err
         if not isinstance(data, dict):
-            # A file holding JSON null must never read as "nothing was ever saved".
             raise RecallStorageError("Recall state is not a saved document")
         return data
 
@@ -84,7 +79,6 @@ class RecallFileStore:
 
 
 def recall_owner_for(hass, entry) -> RecallOwner:
-    """Return the entry's Recall owner, which outlives option-triggered reloads."""
     domain_data = hass.data.setdefault(DOMAIN, {})
     owners: dict[str, RecallOwner] = domain_data.setdefault(_RECALL_OWNERS, {})
     if entry.entry_id not in owners:
@@ -101,6 +95,5 @@ def existing_recall_owner(hass, entry) -> RecallOwner | None:
 
 
 async def async_remove_recall_state(hass, entry) -> None:
-    """Forget local Recall state when the entry is deleted. Halo keeps its registration."""
     hass.data.get(DOMAIN, {}).get(_RECALL_OWNERS, {}).pop(entry.entry_id, None)
     await RecallFileStore(hass, entry.entry_id).async_remove()

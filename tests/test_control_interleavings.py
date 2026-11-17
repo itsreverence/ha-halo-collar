@@ -54,7 +54,6 @@ RECALL_PET = "pet-1"
 ACCOUNT = "account-binding"
 MOBILE_ID = 7
 SERVER_TIME = "2026-11-17T12:00:00Z"
-# Halo's one-minute window is capped at 30 seconds after SERVER_TIME.
 RECALL_WINDOW = "00:01:00"
 RECALL_BODY = {
     "mobileId": MOBILE_ID,
@@ -221,8 +220,6 @@ class FakeResponse:
 
 
 class FakeWriteTransport:
-    """Mirrors HaloWriteTransport.request: pre_dispatch runs with no await before the send."""
-
     def __init__(self, harness: Harness) -> None:
         self._h = harness
 
@@ -252,8 +249,6 @@ class FakeWriteTransport:
 
 
 class FakeStore:
-    """The Recall state file. Each save parks on a gate; loads read the durable copy."""
-
     def __init__(self, harness: Harness) -> None:
         self._h = harness
 
@@ -271,10 +266,7 @@ class FakeStore:
 @dataclass
 class Scenario:
     name: str
-    presses: tuple[str, ...]  # each "enable" | "disable" | "find" | "recall" | "register"
-    # Per press, on the schedule where every choice is index 0: "success" (one dispatch),
-    # "noop" (success without a dispatch), "refused" (no dispatch), or "rejected"
-    # (HaloControlError after one dispatch).
+    presses: tuple[str, ...]
     uncontested: tuple[str, ...]
     env: tuple[str, ...]
     budget: int
@@ -353,7 +345,6 @@ class Harness:
             self.rebuild_snapshot()
 
     def replace_runtime(self) -> None:
-        """A reload: the entry gets a new runtime and this one's coordinator shuts down."""
         self.runtime_current = False
         self.coordinator_live = False
 
@@ -388,7 +379,6 @@ class Harness:
         finally:
             self.gates.remove(gate)
 
-    # -- Recall provider and local state ---------------------------------------
     def durable_state(self) -> str:
         return self.durable["registration"]["state"] if self.durable else "unregistered"
 
@@ -507,7 +497,6 @@ class Harness:
             self.fail("dispatched the Recall whistle to firmware without numbered commands")
         if self.clock - self.preflight_clock[txn] > 30 - recall.RECALL_MIN_REMAINING_SECONDS:
             self.fail("dispatched a Recall command with too little lifetime left")
-        # Whistle only: the exact body, whatever the number.
         if type(number) is not int or payload != {**RECALL_BODY, "commandNumber": number}:
             self.fail(f"Recall request body was {payload}")
         # P4: cooldown recorded before dispatch and respected between dispatches.
@@ -677,7 +666,6 @@ class Harness:
             self.log.append("access token starts expired")
         self.owner = RecallOwner(store=FakeStore(self), account=ACCOUNT, lock=self.lock)
         await self.owner.async_load()
-        # Let the hold that follows loading an existing registration lapse.
         self.advance_clock(RECALL_COOLDOWN_SECONDS)
 
         for txn, action in enumerate(self.scenario.presses, start=1):
@@ -867,7 +855,6 @@ SCENARIOS = [
     Scenario(
         "disable+find", ("disable", "find"), ("success", "success"), ("walk_active",), budget=1
     ),
-    # The second press waits on the lock while the entry unloads, as after a reload.
     Scenario("enable+find", ("enable", "find"), ("success", "success"), RUNTIME_ENV, budget=1),
     Scenario(
         "disable+enable",
@@ -884,7 +871,6 @@ SCENARIOS = [
         ("cooldown_elapsed",),
         budget=2,
     ),
-    # Halo is five numbers ahead of the saved sequence, so the first press is rejected.
     Scenario(
         "recall-desync",
         ("recall", "recall"),

@@ -123,7 +123,6 @@ class FakeRecallClient:
 
 @pytest.fixture(autouse=True)
 def _private_config_dir(hass, tmp_path):
-    # The Recall state file is written directly, not through the mocked Store.
     hass.config.config_dir = str(tmp_path)
 
 

@@ -22,8 +22,6 @@ DEFAULT_SCAN_INTERVAL_SECONDS = 300
 MIN_SCAN_INTERVAL_SECONDS = 60
 MAX_SCAN_INTERVAL_SECONDS = 3600
 
-# Write controls are explicit opt-ins. Fence disabling, Find Collar, and the Recall
-# whistle are separate tiers.
 CONF_ENABLE_FENCE_CONTROLS = "enable_fence_controls"
 CONF_ALLOW_FENCE_DISABLE = "allow_fence_disable"
 CONF_ENABLE_FIND_COLLAR = "enable_find_collar"

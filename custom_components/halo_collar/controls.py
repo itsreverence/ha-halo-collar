@@ -66,7 +66,6 @@ def find_collar_cooldown_remaining(cooldowns: dict[str, float], collar_id: str) 
 
 
 def live_runtime_check(domain_data: dict[str, Any], entry_id: str) -> Callable[[], bool]:
-    """Return a check that the entry still runs the runtime it runs now."""
     runtime = domain_data[entry_id]
     return lambda: domain_data.get(entry_id) is runtime
 
@@ -90,7 +89,6 @@ async def async_refresh_snapshot(coordinator) -> bool:
 async def async_preflight_refresh(
     coordinator, is_current: Callable[[], bool], *, failure: str
 ) -> None:
-    """Fetch the snapshot a command is authorized from, on the entry's live runtime."""
     fetched = await async_refresh_snapshot(coordinator)
     ensure_live_runtime(is_current)
     if not fetched:

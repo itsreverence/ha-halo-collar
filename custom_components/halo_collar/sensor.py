@@ -360,8 +360,6 @@ class HaloControlStatusSensor(HaloEntity, SensorEntity):
 
 
 class HaloRecallStatusSensor(HaloDogEntity, SensorEntity):
-    """Advisory Recall readiness for one dog from cached state. Never authorizes a press."""
-
     _attr_device_class = SensorDeviceClass.ENUM
     _attr_options = list(RecallReason)
     _attr_entity_category = EntityCategory.DIAGNOSTIC

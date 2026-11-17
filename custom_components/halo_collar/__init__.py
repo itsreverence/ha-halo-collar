@@ -166,8 +166,6 @@ async def async_setup_entry(hass, entry) -> bool:
                 for pet_id, collar in wearers.items()
             }
 
-        # Each Recall entity sits on the device of the collar its dog wears, so a
-        # reload moves it when that changes.
         known_recall_wearers = _recall_wearer_ids()
         inventory_reload_pending = False
 
@@ -261,7 +259,6 @@ async def async_remove_entry(hass, entry) -> None:
     from .controls import control_lock_for, remove_control_lock
     from .recall_runtime import async_remove_recall_state
 
-    # Wait for any in-flight Recall write so it cannot recreate the file afterwards.
     async with control_lock_for(hass.data.setdefault(DOMAIN, {}), entry.entry_id):
         await async_remove_recall_state(hass, entry)
     remove_control_lock(hass.data.get(DOMAIN, {}), entry.entry_id)

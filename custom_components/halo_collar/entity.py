@@ -53,8 +53,6 @@ class HaloEntity(CoordinatorEntity):
 
 
 class HaloDogEntity(CoordinatorEntity):
-    """One dog's entity, on the device of the collar it wears, or on no device."""
-
     _attr_has_entity_name = True
 
     def __init__(self, coordinator, entry, collar: dict[str, Any] | None, pet_id: str) -> None:

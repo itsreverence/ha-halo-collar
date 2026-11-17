@@ -271,7 +271,6 @@ class HaloCollarOptionsFlow(config_entries.OptionsFlow):
         )
 
     async def async_step_recall_registration(self, user_input: dict[str, Any] | None = None):
-        """Register Home Assistant with Halo once, only after explicit confirmation."""
         errors: dict[str, str] = {}
         if user_input is not None:
             if not user_input.get(CONF_CONFIRM_RECALL_REGISTRATION):

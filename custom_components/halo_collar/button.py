@@ -220,8 +220,6 @@ class HaloFindCollarButton(HaloEntity, ButtonEntity):
 
 
 class HaloRecallWhistleButton(HaloDogEntity, ButtonEntity):
-    """Plays one dog's trained Recall whistle. Keyed by dog, placed on its collar device."""
-
     _attr_translation_key = "recall_whistle"
     _attr_icon = "mdi:whistle"
 
