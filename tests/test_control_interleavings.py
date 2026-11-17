@@ -149,7 +149,8 @@ ENV_ACTIONS = {
     "serial_changed": lambda h: h.observe(serial="serial-2"),
     "server_time_lost": lambda h: h.observe(server_time_known=False),
     "cooldown_elapsed": lambda h: h.advance_clock(FIND_COLLAR_COOLDOWN_SECONDS),
-    "runtime_replaced": lambda h: setattr(h, "runtime_current", False),
+    "runtime_replaced": lambda h: h.replace_runtime(),
+    "coordinator_shut_down": lambda h: setattr(h, "coordinator_live", False),
 }
 
 WRITE_OUTCOMES = {
@@ -192,6 +193,9 @@ class FakeCoordinator:
         return self._h.state
 
     async def async_refresh(self) -> None:
+        if not self._h.coordinator_live:
+            # Home Assistant after unload: no fetch, old data and success flag kept.
+            return
         if await self._h.gate("coordinator_refresh", ("ok", "fail")) == "ok":
             self._h.rebuild_snapshot()
             # The first refresh of a press is its preflight; validation follows with no await.
@@ -319,6 +323,7 @@ class Harness:
         self.halo_next = {self.world.serial: scenario.halo_next}
         self.store_results: list[tuple[int | None, str, int]] = []
         self.runtime_current = True
+        self.coordinator_live = True
         self.step = 0
         self.violation: Violation | None = None
 
@@ -344,7 +349,13 @@ class Harness:
     def observe(self, **changes: Any) -> None:
         """Provider state changes and a background coordinator refresh lands it."""
         self.world = replace(self.world, **changes)
-        self.rebuild_snapshot()
+        if self.coordinator_live:
+            self.rebuild_snapshot()
+
+    def replace_runtime(self) -> None:
+        """A reload: the entry gets a new runtime and this one's coordinator shuts down."""
+        self.runtime_current = False
+        self.coordinator_live = False
 
     def advance_clock(self, seconds: float) -> None:
         self.clock += seconds
@@ -436,7 +447,12 @@ class Harness:
             self.check_registration_dispatch()
             self.dispatches.append(dispatch)
             return dispatch
-        # P1: every gate holds on the current snapshot and current options.
+        # P1: authorized by a fetch this press made on the live runtime, and every gate
+        # holds on the current snapshot and current options.
+        if not self.runtime_current:
+            self.fail("dispatched for a replaced runtime")
+        if txn not in self.preflight_pet:
+            self.fail("dispatched without a fresh preflight fetch")
         if snap.pet_id != self.preflight_pet.get(txn):
             self.fail("dispatched after the pet/collar mapping changed since preflight")
         if not self.fresh_now():
@@ -577,6 +593,7 @@ class Harness:
                     client=self.client,
                     entry=self.entry,
                     control_lock=self.lock,
+                    is_current=lambda: self.runtime_current,
                     cooldowns=self.cooldowns,
                     state_getter=lambda: (*state_getter(), self.state.subscription),
                 )
@@ -596,6 +613,7 @@ class Harness:
                     client=self.client,
                     entry=self.entry,
                     control_lock=self.lock,
+                    is_current=lambda: self.runtime_current,
                     state_getter=state_getter,
                     enabled=action == "enable",
                 )
@@ -790,12 +808,14 @@ def explore(scenario: Scenario, monkeypatch) -> int:
         loop.close()
 
 
+RUNTIME_ENV = ("runtime_replaced", "coordinator_shut_down")
 FENCE_ENV = (
     "revoke_fence_controls",
     "tighten_stale_after",
     "telemetry_stale",
     "collar_rebound",
     "fences_flipped_elsewhere",
+    *RUNTIME_ENV,
 )
 RECALL_ENV = (
     "revoke_recall",
@@ -832,6 +852,7 @@ SCENARIOS = [
             "collar_rebound",
             "mapping_one_sided",
             "entitlement_lost",
+            *RUNTIME_ENV,
         ),
         budget=2,
     ),
@@ -841,6 +862,8 @@ SCENARIOS = [
     Scenario(
         "disable+find", ("disable", "find"), ("success", "success"), ("walk_active",), budget=1
     ),
+    # The second press waits on the lock while the entry unloads, as after a reload.
+    Scenario("enable+find", ("enable", "find"), ("success", "success"), RUNTIME_ENV, budget=1),
     Scenario(
         "disable+enable",
         ("disable", "enable"),

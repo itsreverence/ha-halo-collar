@@ -104,12 +104,12 @@ not make Home Assistant's nonrecoverable `FAILED_UNLOAD` state recoverable.
 The default installation is telemetry-only. Fence controls and Find collar require separate explicit option tiers. Entity availability alone never authorizes a command.
 
 1. Acquire the domain-level config-entry transaction lock, which survives option-triggered reloads.
-2. Force a non-debounced cloud refresh. Validate current options, required entitlement, snapshot-wide one-to-one pet/collar mapping, and telemetry. Controls use the shorter of **Collar report age limit** and 900 seconds.
-3. After any token refresh and immediately before transport dispatch, revalidate options, telemetry freshness, command-specific safety state, and the exact pet/collar IDs captured by preflight. Concurrent token refreshes are serialized and double-checked.
+2. Force a non-debounced cloud refresh, and require that it fetched a new snapshot on the entry's live runtime. A press that waited on the lock across a reload holds the replaced runtime, whose coordinator Home Assistant shut down; its refresh returns without fetching and keeps the old snapshot and success flag, so the press refuses. Validate current options, required entitlement, snapshot-wide one-to-one pet/collar mapping, and telemetry. Controls use the shorter of **Collar report age limit** and 900 seconds.
+3. After any token refresh and immediately before transport dispatch, recheck that the runtime is still live, then revalidate options, telemetry freshness, command-specific safety state, and the exact pet/collar IDs captured by preflight. Concurrent token refreshes are serialized and double-checked.
 4. Dispatch at most one request with redirects disabled. Never replay an ambiguous HTTP or network outcome, including 401.
 5. Retain the lock through read-only post-dispatch reconciliation. Cancellation before the synchronous dispatch boundary cancels the inner task and sends nothing. Cancellation after dispatch waits for reconciliation before propagating.
 
-Fence changes require fresh synchronized reported-state confirmation. Fence-off additionally requires both fence-control opt-ins and rejects active or unknown walks.
+Fence changes require fresh synchronized reported-state confirmation from a refresh that fetched after dispatch. Fence-off additionally requires both fence-control opt-ins and rejects active or unknown walks.
 
 Find collar requests the physical find sound and light command. It is not the trained Recall whistle; that is the separate Recall tier. It may confuse a pet wearing the collar. It requires its own opt-in, enabled `findcollar` entitlement, fresh exact mapping, and no active or unknown walk. A reload-stable per-collar **60-second cooldown** starts immediately before every attempted dispatch, including failed or ambiguous outcomes. The endpoint exposes no durable sound/light confirmation state. An unambiguous provider success means command acceptance, not verified physical execution. A 404 or ambiguous result remains an error and is never retried.
 

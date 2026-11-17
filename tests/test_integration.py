@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from copy import deepcopy
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -81,7 +82,7 @@ class FakeHaloClient:
 
     async def async_fetch_state(self):
         self.fetches += 1
-        return self.state
+        return replace(self.state)
 
     async def async_set_fences_enabled(self, pet_id, *, enabled, pre_dispatch=None):
         if pre_dispatch is not None:
@@ -118,7 +119,7 @@ class ToggleFailureClient(FakeHaloClient):
         self.fetches += 1
         if self.error is not None:
             raise self.error
-        return self.state
+        return replace(self.state)
 
 
 def _complete_issues(status: str = "noIssue") -> dict:
@@ -668,10 +669,7 @@ async def test_find_status_restores_cooldown_on_reload_with_button_disabled(hass
     assert client.fetches == fetches
 
 
-@pytest.mark.parametrize("failed_reconciliation", [False, True])
-async def test_status_cooldown_lifecycle_survives_button_disabled_after_reload(
-    hass, monkeypatch, failed_reconciliation
-):
+async def test_status_cooldown_lifecycle_survives_button_disabled_after_reload(hass, monkeypatch):
     clock = [1000.0]
     monkeypatch.setattr(
         "custom_components.halo_collar.controls.time", SimpleNamespace(monotonic=lambda: clock[0])
@@ -686,33 +684,31 @@ async def test_status_cooldown_lifecycle_survives_button_disabled_after_reload(
     old_coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
     cooldowns = find_collar_cooldowns_for(hass.data[DOMAIN], entry.entry_id)
     status_id = _state_for_unique_id(hass, "sensor", "collar-1_find_collar_status").entity_id
-    dispatch_waiting = asyncio.Event()
-    release_dispatch = asyncio.Event()
+    reply_waiting = asyncio.Event()
+    release_reply = asyncio.Event()
 
-    async def late_dispatch(collar_id, *, pre_dispatch):
-        dispatch_waiting.set()
-        await release_dispatch.wait()
+    async def slow_reply(collar_id, *, pre_dispatch):
         pre_dispatch()
         client.finds.append(collar_id)
-        if failed_reconciliation:
-            client.error = HaloApiError("synthetic reconciliation outage")
+        reply_waiting.set()
+        await release_reply.wait()
 
-    client.async_find_collar = late_dispatch
+    client.async_find_collar = slow_reply
     task = asyncio.create_task(old_button.async_press())
     try:
         async with asyncio.timeout(10):
-            await dispatch_waiting.wait()
+            await reply_waiting.wait()
             assert await hass.config_entries.async_unload(entry.entry_id)
             registry.async_update_entity(button_id, disabled_by=er.RegistryEntryDisabler.USER)
             await _setup(hass, entry, client)
             assert hass.data[DOMAIN][entry.entry_id]["coordinator"] is not old_coordinator
             assert find_collar_cooldowns_for(hass.data[DOMAIN], entry.entry_id) is cooldowns
             assert hass.data[DATA_INSTANCES]["button"].get_entity(button_id) is None
-            assert hass.states.get(status_id).state == "ready"
-            release_dispatch.set()
+            assert hass.states.get(status_id).state == "cooldown"
+            release_reply.set()
             await task
     finally:
-        release_dispatch.set()
+        release_reply.set()
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
     await hass.async_block_till_done()
@@ -1541,6 +1537,42 @@ async def test_failed_unload_retains_runtime_and_control_state(hass):
     assert domain_data[entry.entry_id] is stored
     assert control_lock_for(domain_data, entry.entry_id) is original_lock
     assert find_collar_cooldowns_for(domain_data, entry.entry_id) == {"collar-1": 123.0}
+
+
+@pytest.mark.parametrize(
+    ("platform", "unique_id", "service"),
+    [("button", "collar-1_find_collar", "press"), ("switch", "collar-1_fence_mode", "turn_off")],
+)
+async def test_control_queued_across_a_reload_sends_nothing_on_the_retired_runtime(
+    hass, platform, unique_id, service
+):
+    client = FakeHaloClient(_state())
+    entry = _entry({CONF_ENABLE_FIND_COLLAR: True, CONF_ALLOW_FENCE_DISABLE: True})
+    entry.add_to_hass(hass)
+    await _setup(hass, entry, client)
+    entity_id = _state_for_unique_id(hass, platform, unique_id).entity_id
+    lock = control_lock_for(hass.data[DOMAIN], entry.entry_id)
+
+    await lock.acquire()
+    try:
+        command = asyncio.create_task(
+            hass.services.async_call(platform, service, {"entity_id": entity_id}, blocking=True)
+        )
+        for _ in range(50):
+            await asyncio.sleep(0)
+        assert not command.done()
+        with patch("custom_components.halo_collar.api.HaloApiClient", return_value=client):
+            assert await hass.config_entries.async_reload(entry.entry_id)
+        walking = _state()
+        walking.pets[0]["collarInfo"]["telemetry"]["walk"] = {"startTime": "now"}
+        walking.collars[0]["telemetry"]["walk"] = {"startTime": "now"}
+        client.state = walking
+    finally:
+        lock.release()
+
+    with pytest.raises(HomeAssistantError, match="reloaded"):
+        await command
+    assert (client.finds, client.writes) == ([], [])
 
 
 async def test_permanent_config_entry_removal_clears_control_state(hass):

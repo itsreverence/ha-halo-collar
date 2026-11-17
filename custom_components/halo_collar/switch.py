@@ -10,6 +10,7 @@ from .controls import (
     async_set_fence_mode,
     control_lock_for,
     control_stale_after,
+    live_runtime_check,
 )
 from .entity import HaloEntity
 from .helpers import is_online, pet_fences_enabled
@@ -29,6 +30,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
             stored["client"],
             collar,
             control_lock_for(hass.data[DOMAIN], entry.entry_id),
+            live_runtime_check(hass.data[DOMAIN], entry.entry_id),
         )
         for collar in coordinator.data.collars
     )
@@ -40,10 +42,11 @@ class HaloFenceModeSwitch(HaloEntity, SwitchEntity):
     _attr_translation_key = "fence_mode"
     _attr_icon = "mdi:fence"
 
-    def __init__(self, coordinator, entry, client, collar, control_lock) -> None:
+    def __init__(self, coordinator, entry, client, collar, control_lock, is_current) -> None:
         super().__init__(coordinator, entry, collar)
         self._client = client
         self._control_lock = control_lock
+        self._is_current = is_current
         self._attr_unique_id = f"{self._collar_id}_fence_mode"
 
     @property
@@ -76,6 +79,7 @@ class HaloFenceModeSwitch(HaloEntity, SwitchEntity):
                 client=self._client,
                 entry=self._entry,
                 control_lock=self._control_lock,
+                is_current=self._is_current,
                 state_getter=lambda: (self.pet, self.collar),
                 enabled=enabled,
             )

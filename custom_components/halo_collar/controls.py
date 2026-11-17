@@ -29,6 +29,9 @@ class HaloControlError(Exception):
     """Raised when a guarded control cannot be executed or confirmed safely."""
 
 
+RUNTIME_REPLACED = "Halo Collar reloaded before the command was sent, so nothing was sent"
+
+
 def telemetry_stale_after(entry) -> float:
     return float(entry.options.get(CONF_STALE_AFTER, DEFAULT_STALE_AFTER_SECONDS))
 
@@ -60,6 +63,38 @@ def find_collar_cooldown_remaining(cooldowns: dict[str, float], collar_id: str) 
     if dispatched_at is None:
         return 0.0
     return max(0.0, dispatched_at + FIND_COLLAR_COOLDOWN_SECONDS - time.monotonic())
+
+
+def live_runtime_check(domain_data: dict[str, Any], entry_id: str) -> Callable[[], bool]:
+    """Return a check that the entry still runs the runtime it runs now."""
+    runtime = domain_data[entry_id]
+    return lambda: domain_data.get(entry_id) is runtime
+
+
+def ensure_live_runtime(is_current: Callable[[], bool]) -> None:
+    if not is_current():
+        raise HaloControlError(RUNTIME_REPLACED)
+
+
+async def async_refresh_snapshot(coordinator) -> bool:
+    """Refresh Halo state and report whether this refresh fetched a new snapshot.
+
+    Once Home Assistant shuts a coordinator down on unload, its refresh returns without
+    fetching and keeps the old data and success flag.
+    """
+    previous = coordinator.data
+    await coordinator.async_refresh()
+    return coordinator.last_update_success and coordinator.data is not previous
+
+
+async def async_preflight_refresh(
+    coordinator, is_current: Callable[[], bool], *, failure: str
+) -> None:
+    """Fetch the snapshot a command is authorized from, on the entry's live runtime."""
+    fetched = await async_refresh_snapshot(coordinator)
+    ensure_live_runtime(is_current)
+    if not fetched:
+        raise HaloControlError(failure)
 
 
 def remove_control_lock(domain_data: dict[str, Any], entry_id: str) -> None:
@@ -140,8 +175,7 @@ async def _async_dispatch_and_reconcile(
             pre_dispatch=pre_dispatch,
         )
     except HaloWriteOutcomeUnknown as err:
-        await coordinator.async_refresh()
-        if coordinator.last_update_success and _is_confirmed(
+        if await async_refresh_snapshot(coordinator) and _is_confirmed(
             state_getter,
             enabled=enabled,
             pet_id=pet_id,
@@ -153,8 +187,7 @@ async def _async_dispatch_and_reconcile(
             "Halo write outcome is unknown and could not be reconciled; check the official Halo app"
         ) from err
 
-    await coordinator.async_refresh()
-    if not coordinator.last_update_success:
+    if not await async_refresh_snapshot(coordinator):
         raise HaloControlError(
             "Halo command was sent but state confirmation failed; check the official Halo app"
         )
@@ -211,6 +244,7 @@ async def async_set_fence_mode(
     client,
     entry,
     control_lock: Lock,
+    is_current: Callable[[], bool],
     state_getter: Callable[[], tuple[dict[str, Any] | None, dict[str, Any] | None]],
     enabled: bool,
 ) -> None:
@@ -218,9 +252,11 @@ async def async_set_fence_mode(
     async with control_lock:
         _validate_options(entry, enabled=enabled)
 
-        await coordinator.async_refresh()
-        if not coordinator.last_update_success:
-            raise HaloControlError("Could not refresh Halo state before changing fence mode")
+        await async_preflight_refresh(
+            coordinator,
+            is_current,
+            failure="Could not refresh Halo state before changing fence mode",
+        )
 
         stale_after = control_stale_after(entry)
         strictest_stale_after = stale_after
@@ -244,6 +280,7 @@ async def async_set_fence_mode(
 
         def validate_dispatch_boundary() -> None:
             nonlocal dispatch_committed
+            ensure_live_runtime(is_current)
             _validate_options(entry, enabled=enabled)
             _validate_snapshot(
                 state_getter,
@@ -347,6 +384,7 @@ async def async_find_collar(
     client,
     entry,
     control_lock: Lock,
+    is_current: Callable[[], bool],
     cooldowns: dict[str, float],
     state_getter: Callable[
         [], tuple[dict[str, Any] | None, dict[str, Any] | None, dict[str, Any] | None]
@@ -362,9 +400,11 @@ async def async_find_collar(
         if existing_collar is not None and isinstance(existing_collar.get("id"), str):
             _ensure_find_cooldown_clear(cooldowns, existing_collar["id"])
 
-        await coordinator.async_refresh()
-        if not coordinator.last_update_success:
-            raise HaloControlError("Could not refresh Halo state before finding the collar")
+        await async_preflight_refresh(
+            coordinator,
+            is_current,
+            failure="Could not refresh Halo state before finding the collar",
+        )
 
         strictest_stale_after = control_stale_after(entry)
 
@@ -387,6 +427,7 @@ async def async_find_collar(
 
         def validate_and_commit_dispatch() -> None:
             nonlocal dispatch_committed
+            ensure_live_runtime(is_current)
             _validate_find_options(entry)
             _validate_find_snapshot(
                 state_getter,

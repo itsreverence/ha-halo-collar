@@ -55,11 +55,18 @@ class FakeCoordinator:
         self.index = -1
         self.last_update_success = True
         self.refreshes = 0
+        self.data = None
+        # Home Assistant's refresh after unload: no fetch, old data and success flag kept.
+        self.shut_down = False
 
     async def async_refresh(self):
         self.refreshes += 1
+        if self.shut_down:
+            return
         self.index = min(self.index + 1, len(self.states) - 1)
         self.last_update_success = self.successes[self.index]
+        if self.last_update_success:
+            self.data = (self.refreshes, self.state)
 
     async def async_request_refresh(self):
         raise AssertionError("control transactions must bypass the debouncer")
@@ -153,12 +160,15 @@ def _entry(*, enable=True, allow_disable=False):
     )
 
 
-async def _execute(coordinator, client, entry, *, enabled, control_lock=None):
+async def _execute(
+    coordinator, client, entry, *, enabled, control_lock=None, is_current=lambda: True
+):
     await async_set_fence_mode(
         coordinator=coordinator,
         client=client,
         entry=entry,
         control_lock=control_lock or asyncio.Lock(),
+        is_current=is_current,
         state_getter=lambda: coordinator.state,
         enabled=enabled,
     )
@@ -680,12 +690,14 @@ async def _execute_find(
     *,
     control_lock=None,
     cooldowns=None,
+    is_current=lambda: True,
 ):
     await async_find_collar(
         coordinator=coordinator,
         client=client,
         entry=entry,
         control_lock=control_lock or asyncio.Lock(),
+        is_current=is_current,
         cooldowns={} if cooldowns is None else cooldowns,
         state_getter=lambda: coordinator.state,
     )
@@ -1062,3 +1074,65 @@ async def test_find_collar_cancellation_before_dispatch_has_no_write_or_cooldown
     assert cooldowns == {}
     assert coordinator.refreshes == 1
     assert control_lock.locked() is False
+
+
+async def _press(action, coordinator, client, *, is_current=lambda: True):
+    if action == "find":
+        await _execute_find(coordinator, client, _find_entry(), is_current=is_current)
+    else:
+        await _execute(coordinator, client, _entry(), enabled=True, is_current=is_current)
+
+
+def _control(action):
+    state = (_pet(), _collar(), _subscription()) if action == "find" else (_pet(), _collar())
+    client = (FakeFindClient if action == "find" else FakeClient)()
+    return FakeCoordinator([state]), client
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["enable", "find"])
+async def test_refresh_that_fetched_nothing_never_authorizes_a_command(action):
+    coordinator, client = _control(action)
+    await coordinator.async_refresh()
+    coordinator.shut_down = True
+
+    with pytest.raises(HaloControlError, match="Could not refresh"):
+        await _press(action, coordinator, client)
+
+    assert client.writes == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["enable", "find"])
+async def test_replaced_runtime_sends_nothing_at_the_dispatch_boundary(action):
+    coordinator, _ = _control(action)
+    live = [True]
+
+    def replace_runtime():
+        live.clear()
+
+    client = (
+        MutatingFindClient(replace_runtime)
+        if action == "find"
+        else MutatingAtDispatchClient(replace_runtime)
+    )
+
+    with pytest.raises(HaloControlError, match="reloaded"):
+        await _press(action, coordinator, client, is_current=lambda: bool(live))
+
+    assert client.writes == []
+
+
+@pytest.mark.asyncio
+async def test_fence_confirmation_needs_a_fetch_after_dispatch():
+    coordinator = FakeCoordinator([(_pet(fences_on=True), _collar())])
+
+    def unload_during_dispatch():
+        coordinator.shut_down = True
+
+    client = MutatingAtDispatchClient(unload_during_dispatch)
+
+    with pytest.raises(HaloControlError, match="state confirmation failed"):
+        await _execute(coordinator, client, _entry(), enabled=True)
+
+    assert client.writes == [("pet-1", True)]

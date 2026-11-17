@@ -71,7 +71,7 @@ async def test_minimum_ha_dispatcher_isolates_status_listener_from_real_button_r
 
     async def fetch():
         fetches.append(True)
-        return state
+        return deepcopy(state)
 
     async def find(collar_id, *, pre_dispatch):
         if rejected:
@@ -92,6 +92,7 @@ async def test_minimum_ha_dispatcher_isolates_status_listener_from_real_button_r
         SimpleNamespace(async_find_collar=find),
         state.collars[0],
         asyncio.Lock(),
+        lambda: True,
         cooldowns,
     )
     sensor_component = EntityComponent(logging.getLogger(__name__), "sensor", hass)

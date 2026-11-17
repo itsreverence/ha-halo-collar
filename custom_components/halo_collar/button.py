@@ -24,6 +24,7 @@ from .controls import (
     control_stale_after,
     find_collar_cooldown_remaining,
     find_collar_cooldowns_for,
+    live_runtime_check,
 )
 from .entity import HaloEntity
 from .helpers import has_active_walk, is_online, subscription_feature_enabled
@@ -40,6 +41,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
     stored = hass.data[DOMAIN][entry.entry_id]
     coordinator = stored["coordinator"]
     control_lock = control_lock_for(hass.data[DOMAIN], entry.entry_id)
+    is_current = live_runtime_check(hass.data[DOMAIN], entry.entry_id)
     entities = []
     if fence_controls:
         entities.extend(
@@ -49,6 +51,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
                 stored["client"],
                 collar,
                 control_lock,
+                is_current,
             )
             for collar in coordinator.data.collars
         )
@@ -61,6 +64,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
                 stored["client"],
                 collar,
                 control_lock,
+                is_current,
                 cooldowns,
             )
             for collar in coordinator.data.collars
@@ -80,10 +84,11 @@ class HaloEnableFencesButton(HaloEntity, ButtonEntity):
     _attr_translation_key = "enable_fences"
     _attr_icon = "mdi:shield-check"
 
-    def __init__(self, coordinator, entry, client, collar, control_lock) -> None:
+    def __init__(self, coordinator, entry, client, collar, control_lock, is_current) -> None:
         super().__init__(coordinator, entry, collar)
         self._client = client
         self._control_lock = control_lock
+        self._is_current = is_current
         self._attr_unique_id = f"{self._collar_id}_enable_fences"
 
     @property
@@ -105,6 +110,7 @@ class HaloEnableFencesButton(HaloEntity, ButtonEntity):
                 client=self._client,
                 entry=self._entry,
                 control_lock=self._control_lock,
+                is_current=self._is_current,
                 state_getter=lambda: (self.pet, self.collar),
                 enabled=True,
             )
@@ -125,11 +131,13 @@ class HaloFindCollarButton(HaloEntity, ButtonEntity):
         client,
         collar,
         control_lock,
+        is_current,
         cooldowns,
     ) -> None:
         super().__init__(coordinator, entry, collar)
         self._client = client
         self._control_lock = control_lock
+        self._is_current = is_current
         self._cooldowns = cooldowns
         self._cancel_cooldown_update = None
         self._attr_unique_id = f"{self._collar_id}_find_collar"
@@ -188,6 +196,7 @@ class HaloFindCollarButton(HaloEntity, ButtonEntity):
                 client=self._client,
                 entry=self._entry,
                 control_lock=self._control_lock,
+                is_current=self._is_current,
                 cooldowns=self._cooldowns,
                 state_getter=lambda: (
                     self.pet,

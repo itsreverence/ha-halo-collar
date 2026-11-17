@@ -9,8 +9,10 @@ that no longer applies means its file changed and the verification needs another
 Tiers run separately so each CI job stays inside its time cap:
   controls: fence and Find collar (controls.py), against the fence and Find scenarios
   recall:   the Recall whistle (recall.py, api.py), against the Recall scenarios
+  runtime:  the live-runtime and fresh-fetch checks every press shares, against the
+            scenarios that unload the entry
 
-Run: uv run python scripts/check_control_mutants.py [controls] [recall]
+Run: uv run python scripts/check_control_mutants.py [controls] [recall] [runtime]
 """
 
 from __future__ import annotations
@@ -46,10 +48,10 @@ class Mutant(NamedTuple):
 CONTROL_MUTANTS: list[tuple[str, str, str]] = [
     (
         "fence pre_dispatch skips option recheck",
-        """            nonlocal dispatch_committed
+        """            ensure_live_runtime(is_current)
             _validate_options(entry, enabled=enabled)
 """,
-        """            nonlocal dispatch_committed
+        """            ensure_live_runtime(is_current)
 """,
     ),
     (
@@ -90,8 +92,7 @@ CONTROL_MUTANTS: list[tuple[str, str, str]] = [
     (
         "ambiguous fence write is replayed once",
         """    except HaloWriteOutcomeUnknown as err:
-        await coordinator.async_refresh()
-        if coordinator.last_update_success and _is_confirmed(""",
+        if await async_refresh_snapshot(coordinator) and _is_confirmed(""",
         """    except HaloWriteOutcomeUnknown as err:
         try:
             await client.async_set_fences_enabled(
@@ -99,8 +100,7 @@ CONTROL_MUTANTS: list[tuple[str, str, str]] = [
             )
         except HaloWriteOutcomeUnknown:
             pass
-        await coordinator.async_refresh()
-        if coordinator.last_update_success and _is_confirmed(""",
+        if await async_refresh_snapshot(coordinator) and _is_confirmed(""",
     ),
     (
         "cancellation after commit abandons reconciliation",
@@ -169,10 +169,10 @@ CONTROL_MUTANTS: list[tuple[str, str, str]] = [
     ),
     (
         "find pre_dispatch skips option recheck",
-        """            nonlocal dispatch_committed
+        """            ensure_live_runtime(is_current)
             _validate_find_options(entry)
 """,
-        """            nonlocal dispatch_committed
+        """            ensure_live_runtime(is_current)
 """,
     ),
     (
@@ -381,9 +381,75 @@ RECALL_MUTANTS = [
 # - A retry that reuses the press's pre_dispatch is refused by the cooldown it just
 #   started, so the retry mutant above bypasses the callback, as a real retry bug would.
 
+RUNTIME_SCENARIOS = CONTROL_SCENARIOS
+FENCE_SCENARIOS = "able and not find and not recall"
+RUNTIME_MUTANTS = [
+    Mutant(
+        "refresh trusts a coordinator that fetched nothing",
+        "    return coordinator.last_update_success and coordinator.data is not previous\n",
+        "    return coordinator.last_update_success\n",
+        CONTROLS,
+        RUNTIME_SCENARIOS,
+    ),
+    Mutant(
+        "preflight trusts a refresh that fetched nothing",
+        """    fetched = await async_refresh_snapshot(coordinator)
+    ensure_live_runtime(is_current)
+    if not fetched:
+""",
+        """    await coordinator.async_refresh()
+    ensure_live_runtime(is_current)
+    if not coordinator.last_update_success:
+""",
+        CONTROLS,
+        "enable and find",
+    ),
+    Mutant(
+        "fence pre_dispatch skips the live-runtime recheck",
+        """            nonlocal dispatch_committed
+            ensure_live_runtime(is_current)
+            _validate_options(entry, enabled=enabled)
+""",
+        """            nonlocal dispatch_committed
+            _validate_options(entry, enabled=enabled)
+""",
+        CONTROLS,
+        FENCE_SCENARIOS,
+    ),
+    Mutant(
+        "find pre_dispatch skips the live-runtime recheck",
+        """            nonlocal dispatch_committed
+            ensure_live_runtime(is_current)
+            _validate_find_options(entry)
+""",
+        """            nonlocal dispatch_committed
+            _validate_find_options(entry)
+""",
+        CONTROLS,
+        "find and not recall",
+    ),
+    Mutant(
+        "fence confirmation trusts a refresh that fetched nothing",
+        """    if not await async_refresh_snapshot(coordinator):
+        raise HaloControlError(
+            "Halo command was sent but state confirmation failed""",
+        """    await coordinator.async_refresh()
+    if not coordinator.last_update_success:
+        raise HaloControlError(
+            "Halo command was sent but state confirmation failed""",
+        CONTROLS,
+        FENCE_SCENARIOS,
+    ),
+]
+# Not listed: dropping ensure_live_runtime from async_preflight_refresh is equivalent.
+# A reload shuts the replaced runtime's coordinator down in the same step, so a later
+# preflight fetches nothing and is refused, and a fetch already in flight is followed
+# by the dispatch-boundary recheck.
+
 TIERS: dict[str, tuple[str, list[Mutant]]] = {
     "controls": (CONTROL_SCENARIOS, [Mutant(*mutant) for mutant in CONTROL_MUTANTS]),
     "recall": (f"{RECALL_SCENARIOS} or {REGISTRATION_SCENARIOS}", RECALL_MUTANTS),
+    "runtime": (RUNTIME_SCENARIOS, RUNTIME_MUTANTS),
 }
 
 

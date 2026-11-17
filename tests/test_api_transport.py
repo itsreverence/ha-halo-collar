@@ -478,13 +478,17 @@ async def test_real_find_transaction_keeps_lock_and_cooldown_through_cancelled_r
     }
     subscription = {"features": [{"featureType": {"id": "findcollar"}, "isEnabled": True}]}
     refresh_count = 0
+    coordinator = SimpleNamespace(last_update_success=True, data=None)
 
     async def refresh():
         nonlocal refresh_count
         refresh_count += 1
+        coordinator.data = object()
         if refresh_count == 2:
             reconciling.set()
             await finish_refresh.wait()
+
+    coordinator.async_refresh = refresh
 
     async with (
         _write_server("find", first_response=None) as (base, received),
@@ -494,10 +498,11 @@ async def test_real_find_transaction_keeps_lock_and_cooldown_through_cancelled_r
 
         async def execute():
             await async_find_collar(
-                coordinator=SimpleNamespace(async_refresh=refresh, last_update_success=True),
+                coordinator=coordinator,
                 client=client,
                 entry=SimpleNamespace(options={CONF_ENABLE_FIND_COLLAR: True}),
                 control_lock=lock,
+                is_current=lambda: True,
                 cooldowns=cooldowns,
                 state_getter=lambda: (pet, collar, subscription),
             )
