@@ -856,7 +856,7 @@ SCENARIOS = [
         ("cooldown_elapsed",),
         budget=2,
     ),
-    # Halo is ahead of the saved sequence: the first press is rejected and resyncs.
+    # Halo is five numbers ahead of the saved sequence, so the first press is rejected.
     Scenario(
         "recall-desync",
         ("recall", "recall"),

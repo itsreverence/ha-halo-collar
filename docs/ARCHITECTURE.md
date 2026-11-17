@@ -117,7 +117,7 @@ Each write (PUT or POST) owns a fresh session and connector that refuses a secon
 
 ### Recall whistle (beta)
 
-The Recall whistle plays a dog's trained Recall sound through Halo's instant-correction endpoint. That endpoint also delivers warnings and static, so the type is structural: `api.py` holds `"returnwhistle"` as one private constant, `HaloRecallCommand` has no type field, and no option, argument, or service field can choose another type. Tests pin the exact four-key body, and a control mutant proves the explorer catches any other value.
+The Recall whistle plays a dog's trained Recall sound through Halo's instant-correction endpoint. That endpoint also delivers warnings and static, so the type is fixed in structure. `api.py` holds `"returnwhistle"` as one private constant, `HaloRecallCommand` has no type field, and no option, argument, or service field can choose another type. Tests pin the exact four-key body, and a control mutant proves the explorer catches any other value.
 
 One `RecallOwner` per config entry, kept across reloads like the control lock, owns all Recall state:
 
