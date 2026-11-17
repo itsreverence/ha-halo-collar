@@ -46,6 +46,9 @@ REDACT_KEYS = frozenset(
 
 STALE_AFTER_SECONDS = 900
 MAX_FUTURE_TELEMETRY_SKEW_SECONDS = 300
+# FirmwareFeaturesDto.CorrectionMethodsWithIdAndExpiration (25): numbered, expiring commands.
+_RECALL_COMMAND_FEATURE = "correctionmethodswithidandexpiration"
+_RECALL_COMMAND_FEATURE_CODE = 25
 
 # Covers every member of the Halo app's status enums; Halo sends them lowercased.
 _STATUS_LABELS = {
@@ -305,6 +308,19 @@ def active_walk_state(pet: dict[str, Any] | None, collar: dict[str, Any] | None)
     if len(walks) == len(payloads):
         return False
     return None
+
+
+def recall_command_support(collar: dict[str, Any]) -> bool | None:
+    """Whether firmware reports numbered, expiring commands; None when the list is unusable."""
+    features = nested(collar, "firmware", "features")
+    if not isinstance(features, list) or any(type(item) not in (str, int) for item in features):
+        return None
+    return any(
+        item.casefold() == _RECALL_COMMAND_FEATURE
+        if isinstance(item, str)
+        else item == _RECALL_COMMAND_FEATURE_CODE
+        for item in features
+    )
 
 
 def has_active_walk(pet: dict[str, Any] | None, collar: dict[str, Any] | None) -> bool:

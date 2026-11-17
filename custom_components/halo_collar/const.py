@@ -22,14 +22,19 @@ DEFAULT_SCAN_INTERVAL_SECONDS = 300
 MIN_SCAN_INTERVAL_SECONDS = 60
 MAX_SCAN_INTERVAL_SECONDS = 3600
 
-# Write controls are explicit opt-ins. Fence disabling and Find Collar are separate tiers.
+# Write controls are explicit opt-ins. Fence disabling, Find Collar, and the Recall
+# whistle are separate tiers.
 CONF_ENABLE_FENCE_CONTROLS = "enable_fence_controls"
 CONF_ALLOW_FENCE_DISABLE = "allow_fence_disable"
 CONF_ENABLE_FIND_COLLAR = "enable_find_collar"
+CONF_ENABLE_RECALL_WHISTLE = "enable_recall_whistle"
+CONF_CONFIRM_RECALL_REGISTRATION = "confirm_recall_registration"
 DEFAULT_ENABLE_FENCE_CONTROLS = False
 DEFAULT_ALLOW_FENCE_DISABLE = False
 DEFAULT_ENABLE_FIND_COLLAR = False
+DEFAULT_ENABLE_RECALL_WHISTLE = False
 FIND_COLLAR_COOLDOWN_SECONDS = 60
+RECALL_COOLDOWN_SECONDS = 60
 
 # How long after the last collar report the connectivity sensor turns "offline".
 CONF_STALE_AFTER = "stale_after"

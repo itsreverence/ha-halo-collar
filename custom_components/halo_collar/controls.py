@@ -170,7 +170,7 @@ async def _async_dispatch_and_reconcile(
         )
 
 
-async def _async_finish_committed_phase(
+async def async_finish_committed_phase(
     coro: Coroutine[Any, Any, None],
     *,
     dispatch_committed: Callable[[], bool],
@@ -258,7 +258,7 @@ async def async_set_fence_mode(
         # in flight. Recheck the exact target and all safety gates immediately
         # before every transport dispatch.
         _validate_options(entry, enabled=enabled)
-        await _async_finish_committed_phase(
+        await async_finish_committed_phase(
             _async_dispatch_and_reconcile(
                 coordinator=coordinator,
                 client=client,
@@ -400,7 +400,7 @@ async def async_find_collar(
             cooldowns[collar_id] = time.monotonic()
             dispatch_committed = True
 
-        await _async_finish_committed_phase(
+        await async_finish_committed_phase(
             _async_dispatch_find_and_refresh(
                 coordinator=coordinator,
                 client=client,
