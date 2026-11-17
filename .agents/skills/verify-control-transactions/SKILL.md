@@ -54,14 +54,15 @@ The check covers everything above within these bounds: one pet, one collar, and 
 
 - Real aiohttp behaviour in `HaloWriteTransport` (single lease, `allow_redirects=False`, no replay). `tests/test_api_transport.py` covers that for PUT and POST.
 - The real `DataUpdateCoordinator`, the real configuration GET retry loop, or the real state file. The harness assumes a refresh either replaces the snapshot, fails, or (after shutdown) does nothing, and a save either replaces the durable copy or fails.
-- Entity `available` properties, button and switch error wrapping, the options flow, and the status dispatcher signals.
+- Entity `available` properties, button and switch error wrapping, the options flow, and the status dispatcher signals. Which dogs get Recall entities and which device each sits on (`recall_dogs`, `HaloDogEntity`, the reload on a wearer change); `tests/test_recall_integration.py` covers them.
+- Unsafe pet or collar IDs. The explorer's IDs always pass `_path_id`; `tests/test_api_transport.py` covers the refusal on every write route.
 - Two config entries for the same account. Those have separate locks, cooldowns, and Recall state, and nothing serializes them.
 - Ordering among tasks that are runnable in the same tick, beyond the gate/cancel combinations above. The driver settles the loop between steps.
 
 ## Run it
 
 ```bash
-uv run pytest tests/test_control_interleavings.py -q        # ~60 s, ~72k schedules
+uv run pytest tests/test_control_interleavings.py -q        # ~35 to 60 s, ~84k schedules
 uv run python scripts/check_control_mutants.py controls     # ~2 min, fence and Find mutants
 uv run python scripts/check_control_mutants.py recall       # ~1 to 2 min, Recall mutants
 uv run python scripts/check_control_mutants.py runtime      # ~1 to 2 min, live-runtime and fresh-fetch mutants
@@ -127,12 +128,12 @@ CI enforces both commands. The `tests` job runs the explorer, and the `control-m
 
 CI cannot tell whether the harness still models the code. A fake can drift from the real transport, or an oracle from the documented rule, while every mutant stays `CAUGHT`. The sync commit marks where a person last checked that.
 
-**Sync commit:** `0ec9d5cad61cc6897b10d31c074648f43d950e06`. The harness and this record were last confirmed to describe the covered files at this commit.
+**Sync commit:** `4184ff3eb7ad00446b44e1161536529c2622e105`. The harness and this record were last confirmed to describe the covered files at this commit.
 
 To see whether model fidelity needs another review:
 
 ```bash
-git diff --stat 0ec9d5cad61cc6897b10d31c074648f43d950e06 -- custom_components/halo_collar/controls.py custom_components/halo_collar/recall.py custom_components/halo_collar/api.py custom_components/halo_collar/transport.py custom_components/halo_collar/helpers.py custom_components/halo_collar/entity.py custom_components/halo_collar/switch.py custom_components/halo_collar/button.py custom_components/halo_collar/const.py
+git diff --stat 4184ff3eb7ad00446b44e1161536529c2622e105 -- custom_components/halo_collar/controls.py custom_components/halo_collar/recall.py custom_components/halo_collar/api.py custom_components/halo_collar/transport.py custom_components/halo_collar/helpers.py custom_components/halo_collar/entity.py custom_components/halo_collar/switch.py custom_components/halo_collar/button.py custom_components/halo_collar/const.py
 ```
 
 If that diff is not empty, read it and confirm (or update) that the fakes, gates, oracles, and this coverage table still describe the code. Then move the sync commit forward.
