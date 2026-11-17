@@ -157,16 +157,21 @@ async def async_setup_entry(hass, entry) -> bool:
             if isinstance(collar.get("id"), str) and collar.get("id")
         }
 
-        def _placed_recall_dogs() -> set[str]:
+        def _recall_wearer_ids() -> dict[str, str | None]:
             if not recall_enabled:
-                return set()
+                return {}
             wearers = recall_wearers(coordinator.data)
-            return {pet_id for pet_id, collar in wearers.items() if collar is not None}
+            return {
+                pet_id: None if collar is None else collar["id"]
+                for pet_id, collar in wearers.items()
+            }
 
-        known_recall_pet_ids = _placed_recall_dogs()
+        # Each Recall entity sits on the device of the collar its dog wears, so a
+        # reload moves it when that changes.
+        known_recall_wearers = _recall_wearer_ids()
         inventory_reload_pending = False
 
-        def _reload_for_new_collars() -> None:
+        def _reload_on_inventory_change() -> None:
             nonlocal inventory_reload_pending
             if inventory_reload_pending:
                 return
@@ -175,12 +180,12 @@ async def async_setup_entry(hass, entry) -> bool:
                 for collar in coordinator.data.collars
                 if isinstance(collar.get("id"), str) and collar.get("id")
             }
-            new_recall_pets = bool(_placed_recall_dogs() - known_recall_pet_ids)
-            if current_collar_ids - known_collar_ids or new_recall_pets:
+            wearers_changed = _recall_wearer_ids() != known_recall_wearers
+            if current_collar_ids - known_collar_ids or wearers_changed:
                 inventory_reload_pending = True
                 async_request_reload(hass, entry)
 
-        entry.async_on_unload(coordinator.async_add_listener(_reload_for_new_collars))
+        entry.async_on_unload(coordinator.async_add_listener(_reload_on_inventory_change))
         setup_complete = True
         return True
     finally:

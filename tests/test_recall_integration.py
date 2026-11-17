@@ -316,6 +316,29 @@ async def test_dog_that_lost_its_collar_keeps_a_button_that_raises(hass, client,
     assert client.sent == []
 
 
+async def test_collar_device_targets_the_dog_wearing_it_after_a_swap(hass, client):
+    entry = await _registered(hass)
+    registry = er.async_get(hass)
+
+    def device_of(pet: int) -> str:
+        return registry.async_get(_entity_id(hass, "button", f"pet-{pet}_recall_whistle")).device_id
+
+    collar_device = {1: device_of(1), 2: device_of(2)}
+    pet_1, pet_2 = client.state.pets
+    collar_1, collar_2 = client.state.collars
+    pet_1["collarInfo"], pet_2["collarInfo"] = pet_2["collarInfo"], pet_1["collarInfo"]
+    collar_1["petInfo"], collar_2["petInfo"] = collar_2["petInfo"], collar_1["petInfo"]
+
+    await hass.data[DOMAIN][entry.entry_id]["coordinator"].async_refresh()
+    await hass.async_block_till_done()
+    await hass.services.async_call(
+        "button", "press", {"device_id": collar_device[1]}, blocking=True
+    )
+
+    assert client.sent == [("pet-2", 0)]
+    assert (device_of(1), device_of(2)) == (collar_device[2], collar_device[1])
+
+
 def _start_walk(client, number: int = 1) -> None:
     client.state.pets[number - 1]["collarInfo"]["telemetry"]["walk"] = {"startTime": "now"}
     client.state.collars[number - 1]["telemetry"]["walk"] = {"startTime": "now"}

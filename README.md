@@ -130,6 +130,8 @@ actions:
       entity_id: button.example_dog_recall_whistle
 ```
 
+Target the button, not the collar's device. A device target presses whichever dog wears that collar, as of Halo's latest report.
+
 The button stays pressable even when a press would be refused, so a refusal shows as an error in the automation trace instead of being skipped silently. Each dog's **Recall whistle status** sensor under **Diagnostic** shows the cached reason a press would be refused, or **Ready to try**. A dog keeps its button while Halo reports no collar for it; a press then fails with that reason.
 
 One case is silent. While the integration itself is not loaded, for example while Home Assistant retries setup after Halo was unreachable at startup, Home Assistant has no Recall buttons and skips `button.press` without an error. If an automation must know, add a condition that the button's state is not `unavailable` and notify yourself otherwise.
