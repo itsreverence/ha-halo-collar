@@ -192,7 +192,9 @@ async def test_minimum_ha_recall_press_saves_its_number_and_reports_cooldown(tmp
     clock[0] += 60
     client = SimpleNamespace(async_get_recall_window=window, async_send_recall_whistle=send)
     sensor = HaloRecallStatusSensor(coordinator, entry, state.collars[0], "pet-1", recall)
-    button = HaloRecallWhistleButton(coordinator, entry, client, state.collars[0], "pet-1", recall)
+    button = HaloRecallWhistleButton(
+        coordinator, entry, client, state.collars[0], "pet-1", recall, lambda: True
+    )
     sensor_component = EntityComponent(logging.getLogger(__name__), "sensor", hass)
     button_component = EntityComponent(logging.getLogger(__name__), "button", hass)
     await sensor_component.async_setup({})

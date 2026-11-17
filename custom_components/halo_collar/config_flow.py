@@ -45,7 +45,7 @@ from .const import (
     MIN_SCAN_INTERVAL_SECONDS,
     MIN_STALE_AFTER_SECONDS,
 )
-from .controls import HaloControlError
+from .controls import HaloControlError, live_runtime_check
 from .recall import Registered, registration_state_name
 from .recall_runtime import recall_owner_for
 
@@ -298,7 +298,7 @@ class HaloCollarOptionsFlow(config_entries.OptionsFlow):
             await recall.async_register(
                 client=runtime["client"],
                 version_string=HA_VERSION,
-                is_current=lambda: self.hass.data.get(DOMAIN, {}).get(entry.entry_id) is runtime,
+                is_current=live_runtime_check(self.hass.data[DOMAIN], entry.entry_id),
             )
         except (HaloApiError, HaloControlError):
             return _REGISTRATION_ERRORS[registration_state_name(recall.registration)]

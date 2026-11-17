@@ -29,7 +29,13 @@ from .api import (
     halo_mobile_id,
 )
 from .const import CONF_ENABLE_RECALL_WHISTLE, RECALL_COOLDOWN_SECONDS
-from .controls import HaloControlError, async_finish_committed_phase, control_stale_after
+from .controls import (
+    HaloControlError,
+    async_finish_committed_phase,
+    async_preflight_refresh,
+    control_stale_after,
+    ensure_live_runtime,
+)
 from .helpers import (
     active_walk_state,
     is_online,
@@ -418,7 +424,9 @@ class RecallOwner:
                 "be saved locally"
             ) from err
 
-    async def async_press(self, pet_id: str, *, coordinator, client, entry) -> None:
+    async def async_press(
+        self, pet_id: str, *, coordinator, client, entry, is_current: Callable[[], bool]
+    ) -> None:
         """Ask Halo to play one pet's Recall whistle, sending at most one request.
 
         Returning means only that Halo accepted the command before it expired. Halo
@@ -431,9 +439,9 @@ class RecallOwner:
             registration = _require_registered(self._registration)
             window = min(await client.async_get_recall_window(), RECALL_MAX_LIFETIME)
 
-            await coordinator.async_refresh()
-            if not coordinator.last_update_success:
-                raise HaloControlError(REFUSALS[RecallReason.CLOUD_UNAVAILABLE])
+            await async_preflight_refresh(
+                coordinator, is_current, failure=REFUSALS[RecallReason.CLOUD_UNAVAILABLE]
+            )
 
             strictest_stale_after = control_stale_after(entry)
 
@@ -488,6 +496,7 @@ class RecallOwner:
 
             def validate_and_commit_dispatch() -> None:
                 nonlocal dispatch_committed
+                ensure_live_runtime(is_current)
                 if authorized_target(current_strictest_stale_after()) != target:
                     raise HaloControlError(
                         "Halo pet/collar mapping changed before command dispatch"

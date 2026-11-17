@@ -119,9 +119,13 @@ class FakeCoordinator:
         self.refreshes = 0
         self.fail = False
         self.on_refresh = None
+        # Home Assistant's refresh after unload: no fetch, old data and success flag kept.
+        self.shut_down = False
 
     async def async_refresh(self) -> None:
         self.refreshes += 1
+        if self.shut_down:
+            return
         if self.fail:
             self.last_update_success = False
             return
@@ -182,6 +186,7 @@ class Rig:
         self.client = FakeClient()
         self.coordinator = FakeCoordinator(_state(clock), clock)
         self.entry = SimpleNamespace(options={CONF_ENABLE_RECALL_WHISTLE: enabled})
+        self.live = True
 
     async def load(self, *, settle_hold=True) -> None:
         await self.owner.async_load()
@@ -190,7 +195,11 @@ class Rig:
 
     async def press(self) -> None:
         await self.owner.async_press(
-            PET, coordinator=self.coordinator, client=self.client, entry=self.entry
+            PET,
+            coordinator=self.coordinator,
+            client=self.client,
+            entry=self.entry,
+            is_current=lambda: self.live,
         )
 
     async def register(self, *, is_current=lambda: True) -> None:
@@ -377,6 +386,29 @@ async def test_missing_halo_window_refuses_before_refresh(rig):
     with pytest.raises(HaloApiError, match="window"):
         await rig.press()
     assert (rig.coordinator.refreshes, rig.client.sent) == (0, [])
+
+
+async def test_refresh_that_fetched_nothing_refuses(rig):
+    rig.coordinator.shut_down = True
+
+    with pytest.raises(HaloControlError) as raised:
+        await rig.press()
+
+    assert str(raised.value) == REFUSALS[RecallReason.CLOUD_UNAVAILABLE]
+    assert (rig.client.sent, rig.store.saves) == ([], [])
+
+
+async def test_replaced_runtime_sends_nothing(rig):
+    def reload():
+        rig.live = False
+
+    rig.client.before_dispatch = reload
+
+    with pytest.raises(HaloControlError, match="reloaded"):
+        await rig.press()
+
+    assert rig.client.sent == []
+    assert rig.owner.cooldown_remaining(SERIAL) == 0
 
 
 async def test_missing_server_clock_refuses(rig):

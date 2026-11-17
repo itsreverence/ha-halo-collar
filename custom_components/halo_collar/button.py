@@ -72,7 +72,9 @@ async def async_setup_entry(hass, entry, async_add_entities):
     if recall_whistle:
         recall = recall_owner_for(hass, entry)
         entities.extend(
-            HaloRecallWhistleButton(coordinator, entry, stored["client"], collar, pet_id, recall)
+            HaloRecallWhistleButton(
+                coordinator, entry, stored["client"], collar, pet_id, recall, is_current
+            )
             for pet_id, collar in recall_pet_collars(coordinator.data).items()
         )
     async_add_entities(entities)
@@ -219,11 +221,12 @@ class HaloRecallWhistleButton(HaloEntity, ButtonEntity):
     _attr_translation_key = "recall_whistle"
     _attr_icon = "mdi:whistle"
 
-    def __init__(self, coordinator, entry, client, collar, pet_id: str, recall) -> None:
+    def __init__(self, coordinator, entry, client, collar, pet_id: str, recall, is_current) -> None:
         super().__init__(coordinator, entry, collar)
         self._client = client
         self._pet_id = pet_id
         self._recall = recall
+        self._is_current = is_current
         self._attr_unique_id = f"{pet_id}_recall_whistle"
 
     @property
@@ -236,7 +239,11 @@ class HaloRecallWhistleButton(HaloEntity, ButtonEntity):
     async def async_press(self) -> None:
         try:
             await self._recall.async_press(
-                self._pet_id, coordinator=self.coordinator, client=self._client, entry=self._entry
+                self._pet_id,
+                coordinator=self.coordinator,
+                client=self._client,
+                entry=self._entry,
+                is_current=self._is_current,
             )
         except (HaloApiError, HaloControlError) as err:
             raise HomeAssistantError(f"Could not play the Halo Recall whistle: {err}") from err

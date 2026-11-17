@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
@@ -42,8 +43,9 @@ from custom_components.halo_collar.const import (
     CONF_STALE_AFTER,
     DOMAIN,
 )
+from custom_components.halo_collar.controls import control_lock_for
 from custom_components.halo_collar.diagnostics import async_get_config_entry_diagnostics
-from custom_components.halo_collar.recall_runtime import existing_recall_owner
+from custom_components.halo_collar.recall_runtime import RecallFileStore, existing_recall_owner
 
 OPTIONS = {
     CONF_SCAN_INTERVAL: 300,
@@ -292,6 +294,57 @@ async def test_refusals_raise_while_the_button_stays_callable(hass, client):
     with pytest.raises(HomeAssistantError, match="Could not refresh"):
         await _press(hass)
 
+    assert client.sent == []
+
+
+def _start_walk(client, number: int = 1) -> None:
+    client.state.pets[number - 1]["collarInfo"]["telemetry"]["walk"] = {"startTime": "now"}
+    client.state.collars[number - 1]["telemetry"]["walk"] = {"startTime": "now"}
+
+
+async def test_press_paused_across_a_reload_sends_nothing(hass, client, monkeypatch):
+    entry = await _registered(hass)
+    saving = asyncio.Event()
+    release = asyncio.Event()
+    save = RecallFileStore.async_save
+
+    async def slow_number_save(self, data):
+        if data["registration"].get("next_by_serial"):
+            saving.set()
+            await release.wait()
+        await save(self, data)
+
+    monkeypatch.setattr(RecallFileStore, "async_save", slow_number_save)
+    press = asyncio.create_task(_press(hass))
+    try:
+        await asyncio.wait_for(saving.wait(), 5)
+        assert await hass.config_entries.async_reload(entry.entry_id)
+        _start_walk(client)
+    finally:
+        release.set()
+
+    with pytest.raises(HomeAssistantError, match="reloaded"):
+        await press
+    assert client.sent == []
+
+
+async def test_press_queued_across_a_reload_sends_nothing(hass, client):
+    entry = await _registered(hass)
+    lock = control_lock_for(hass.data[DOMAIN], entry.entry_id)
+
+    await lock.acquire()
+    try:
+        press = asyncio.create_task(_press(hass, "pet-2"))
+        for _ in range(50):
+            await asyncio.sleep(0)
+        assert not press.done()
+        assert await hass.config_entries.async_reload(entry.entry_id)
+        _start_walk(client, 2)
+    finally:
+        lock.release()
+
+    with pytest.raises(HomeAssistantError, match="reloaded"):
+        await press
     assert client.sent == []
 
 

@@ -381,7 +381,7 @@ RECALL_MUTANTS = [
 # - A retry that reuses the press's pre_dispatch is refused by the cooldown it just
 #   started, so the retry mutant above bypasses the callback, as a real retry bug would.
 
-RUNTIME_SCENARIOS = CONTROL_SCENARIOS
+RUNTIME_SCENARIOS = f"not {REGISTRATION_SCENARIOS}"
 FENCE_SCENARIOS = "able and not find and not recall"
 RUNTIME_MUTANTS = [
     Mutant(
@@ -439,6 +439,16 @@ RUNTIME_MUTANTS = [
             "Halo command was sent but state confirmation failed""",
         CONTROLS,
         FENCE_SCENARIOS,
+    ),
+    Mutant(
+        "recall pre_dispatch skips the live-runtime recheck",
+        """                nonlocal dispatch_committed
+                ensure_live_runtime(is_current)
+""",
+        """                nonlocal dispatch_committed
+""",
+        RECALL,
+        RECALL_SCENARIOS,
     ),
 ]
 # Not listed: dropping ensure_live_runtime from async_preflight_refresh is equivalent.

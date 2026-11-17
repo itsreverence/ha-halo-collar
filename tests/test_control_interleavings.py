@@ -599,7 +599,11 @@ class Harness:
                 )
             elif action == "recall":
                 await self.owner.async_press(
-                    RECALL_PET, coordinator=self.coordinator, client=self.client, entry=self.entry
+                    RECALL_PET,
+                    coordinator=self.coordinator,
+                    client=self.client,
+                    entry=self.entry,
+                    is_current=lambda: self.runtime_current,
                 )
             elif action == "register":
                 await self.owner.async_register(
@@ -829,6 +833,7 @@ RECALL_ENV = (
     "serial_changed",
     "server_time_lost",
     "cooldown_elapsed",
+    *RUNTIME_ENV,
 )
 SCENARIOS = [
     Scenario("enable", ("enable",), ("success",), FENCE_ENV, budget=2, initial_fences_on=False),
