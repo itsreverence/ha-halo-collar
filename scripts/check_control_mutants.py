@@ -1,12 +1,16 @@
-"""Confirm the control interleaving check still fails on known-broken controls.py variants.
+"""Confirm the control interleaving check still fails on known-broken product variants.
 
-Each mutant is a literal text replacement in custom_components/halo_collar/controls.py.
-The script copies the integration and tests into a temporary directory, checks that the
-unmutated explorer passes there, then applies one mutant at a time to the copy and runs
+Each mutant is a literal text replacement in one integration file. The script copies the
+integration and tests into a temporary directory, checks that the unmutated explorer passes
+there for the tier's scenarios, then applies one mutant at a time to the copy and runs
 tests/test_control_interleavings.py against it. The real checkout is only read. A mutant
-that no longer applies means controls.py changed and the verification needs another look.
+that no longer applies means its file changed and the verification needs another look.
 
-Run: uv run python scripts/check_control_mutants.py
+Tiers run separately so each CI job stays inside its time cap:
+  controls: fence and Find collar (controls.py), against the fence and Find scenarios
+  recall:   the Recall whistle (recall.py, api.py), against the Recall scenarios
+
+Run: uv run python scripts/check_control_mutants.py [controls] [recall]
 """
 
 from __future__ import annotations
@@ -17,14 +21,29 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import NamedTuple
 
 ROOT = Path(__file__).resolve().parent.parent
 COPIED = ("custom_components", "tests", "pyproject.toml")
-CONTROLS = Path("custom_components", "halo_collar", "controls.py")
+INTEGRATION = Path("custom_components", "halo_collar")
+CONTROLS = INTEGRATION / "controls.py"
+RECALL = INTEGRATION / "recall.py"
+API = INTEGRATION / "api.py"
 EXPLORER = "tests/test_control_interleavings.py"
 TIMEOUT_SECONDS = 90
+CONTROL_SCENARIOS = "not recall and not register"
 
-MUTANTS: list[tuple[str, str, str]] = [
+
+class Mutant(NamedTuple):
+    name: str
+    old: str
+    new: str
+    path: Path = CONTROLS
+    # pytest -k expression naming the scenarios that must catch this mutant.
+    selector: str = CONTROL_SCENARIOS
+
+
+CONTROL_MUTANTS: list[tuple[str, str, str]] = [
     (
         "fence pre_dispatch skips option recheck",
         """            nonlocal dispatch_committed
@@ -183,6 +202,190 @@ MUTANTS: list[tuple[str, str, str]] = [
 # an equivalent mutant. Every cooldowns writer holds the same entry lock, and the
 # post-preflight check already ran under it, so the recheck cannot change an outcome.
 
+RECALL_SCENARIOS = "recall"
+REGISTRATION_SCENARIOS = "register"
+RECALL_MUTANTS = [
+    Mutant(
+        "recall pre_dispatch skips the boundary recheck",
+        """                if authorized_target(current_strictest_stale_after()) != target:
+                    raise HaloControlError(
+                        "Halo pet/collar mapping changed before command dispatch"
+                    )
+                ensure_lifetime()
+""",
+        """                ensure_lifetime()
+""",
+        RECALL,
+        RECALL_SCENARIOS,
+    ),
+    Mutant(
+        "recall pre_dispatch ignores a collar serial change",
+        "                if authorized_target(current_strictest_stale_after()) != target:\n",
+        "                if authorized_target(current_strictest_stale_after()).pet_id != "
+        "target.pet_id:\n",
+        RECALL,
+        RECALL_SCENARIOS,
+    ),
+    Mutant(
+        "recall pre_dispatch skips the option recheck",
+        """                    enabled=_enabled(entry),
+                    registration=registration,
+""",
+        """                    enabled=True,
+                    registration=registration,
+""",
+        RECALL,
+        RECALL_SCENARIOS,
+    ),
+    Mutant(
+        "recall pre_dispatch skips the lifetime check",
+        """                ensure_lifetime()
+                # Start the cooldown""",
+        """                # Start the cooldown""",
+        RECALL,
+        RECALL_SCENARIOS,
+    ),
+    Mutant(
+        "recall cooldown is not recorded at dispatch",
+        "                self._cooldown_until[target.serial] = time.monotonic() + "
+        "RECALL_COOLDOWN_SECONDS\n",
+        "",
+        RECALL,
+        RECALL_SCENARIOS,
+    ),
+    Mutant(
+        "recall command number is not spent before dispatch",
+        "await self._async_save(_advanced(registration, target.serial, number + 1))",
+        "await self._async_save(_advanced(registration, target.serial, number))",
+        RECALL,
+        RECALL_SCENARIOS,
+    ),
+    Mutant(
+        "recall expiry ignores the 30 second cap",
+        "            window = min(await client.async_get_recall_window(), RECALL_MAX_LIFETIME)\n",
+        "            window = await client.async_get_recall_window()\n",
+        RECALL,
+        RECALL_SCENARIOS,
+    ),
+    Mutant(
+        "recall ignores currentCommandNumber",
+        "        await owner._async_raise_floor(serial, reply.current_command_number + 1)\n",
+        "        pass\n",
+        RECALL,
+        RECALL_SCENARIOS,
+    ),
+    Mutant(
+        "recall treats OldCommandNumber as success",
+        """    if isinstance(reply, HaloRecallAccepted):
+        return
+""",
+        """    if not isinstance(reply, HaloRecallExpired):
+        return
+""",
+        RECALL,
+        RECALL_SCENARIOS,
+    ),
+    Mutant(
+        "recall retries once after an ambiguous outcome",
+        """    except HaloWriteOutcomeUnknown as err:
+        raise HaloControlError(
+            "Halo Recall whistle outcome is unknown.""",
+        """    except HaloWriteOutcomeUnknown as err:
+        await client.async_send_recall_whistle(pet_id, command, pre_dispatch=lambda: None)
+        raise HaloControlError(
+            "Halo Recall whistle outcome is unknown.""",
+        RECALL,
+        RECALL_SCENARIOS,
+    ),
+    Mutant(
+        "recall skips the walk check",
+        """    if walking:
+        return RecallReason.WALK_ACTIVE
+""",
+        "",
+        RECALL,
+        RECALL_SCENARIOS,
+    ),
+    Mutant(
+        "recall skips the firmware check",
+        """    if not supported:
+        return RecallReason.FIRMWARE_UNSUPPORTED
+""",
+        "",
+        RECALL,
+        RECALL_SCENARIOS,
+    ),
+    Mutant(
+        "recall refuses every press",
+        """    if not enabled:
+        return RecallReason.DISABLED
+""",
+        """    if True:
+        return RecallReason.DISABLED
+""",
+        RECALL,
+        RECALL_SCENARIOS,
+    ),
+    Mutant(
+        "whistle sends another correction type",
+        '_RECALL_CORRECTION_TYPE = "returnwhistle"\n',
+        '_RECALL_CORRECTION_TYPE = "warning"\n',
+        API,
+        RECALL_SCENARIOS,
+    ),
+    Mutant(
+        "registration posts without a saved intent",
+        """        try:
+            await owner._async_save(pending)
+        except RecallStorageError as err:""",
+        """        try:
+            pass
+        except RecallStorageError as err:""",
+        RECALL,
+        REGISTRATION_SCENARIOS,
+    ),
+    Mutant(
+        "registration skips the runtime recheck at dispatch",
+        """                nonlocal dispatch_committed
+                if not is_current():
+                    raise HaloControlError(_RUNTIME_CHANGED)
+""",
+        """                nonlocal dispatch_committed
+""",
+        RECALL,
+        REGISTRATION_SCENARIOS,
+    ),
+    Mutant(
+        "registration forgets an ambiguous outcome",
+        "RegistrationUncertain(pending.installation_id) if dispatched() else Unregistered()",
+        "Unregistered()",
+        RECALL,
+        REGISTRATION_SCENARIOS,
+    ),
+    Mutant(
+        "registration resends after an ambiguous outcome",
+        """            if not isinstance(self._registration, Unregistered):
+                _require_registered(self._registration)
+                return
+""",
+        """            if isinstance(self._registration, Registered):
+                return
+""",
+        RECALL,
+        REGISTRATION_SCENARIOS,
+    ),
+]
+# Not listed:
+# - Re-reading the strictest stale_after at the Recall dispatch boundary repeats the fence
+#   and Find closure that their mutants already prove; tests/test_recall.py covers this copy.
+# - A retry that reuses the press's pre_dispatch is refused by the cooldown it just
+#   started, so the retry mutant above bypasses the callback, as a real retry bug would.
+
+TIERS: dict[str, tuple[str, list[Mutant]]] = {
+    "controls": (CONTROL_SCENARIOS, [Mutant(*mutant) for mutant in CONTROL_MUTANTS]),
+    "recall": (f"{RECALL_SCENARIOS} or {REGISTRATION_SCENARIOS}", RECALL_MUTANTS),
+}
+
 
 def _copy_tree(workdir: Path) -> None:
     for name in COPIED:
@@ -193,11 +396,12 @@ def _copy_tree(workdir: Path) -> None:
             shutil.copy2(source, workdir / name)
 
 
-def _run_explorer(workdir: Path) -> subprocess.CompletedProcess[str] | None:
-    """Run the explorer in workdir without bytecode caches. None means it timed out."""
+def _run_explorer(workdir: Path, selector: str) -> subprocess.CompletedProcess[str] | None:
+    """Run the selected scenarios in workdir without bytecode caches. None means timeout."""
+    command = [sys.executable, "-B", "-m", "pytest", "-p", "no:cacheprovider", "-x", "-q"]
     try:
         return subprocess.run(
-            [sys.executable, "-B", "-m", "pytest", "-p", "no:cacheprovider", "-x", "-q", EXPLORER],
+            [*command, "-k", selector, EXPLORER],
             cwd=workdir,
             capture_output=True,
             text=True,
@@ -207,48 +411,62 @@ def _run_explorer(workdir: Path) -> subprocess.CompletedProcess[str] | None:
         return None
 
 
-def main() -> int:
+def _run_tier(workdir: Path, tier: str) -> int:
+    baseline_selector, mutants = TIERS[tier]
+    baseline = _run_explorer(workdir, baseline_selector)
+    if baseline is None or baseline.returncode != 0:
+        reason = f"timed out after {TIMEOUT_SECONDS}s" if baseline is None else "failed"
+        print(f"BASELINE {tier} {reason}: the unmutated explorer must pass before mutants count")
+        if baseline is not None:
+            print(baseline.stdout[-4000:])
+            print(baseline.stderr[-4000:])
+        return 1
+    print(f"BASELINE {tier} passed")
+
+    missed = 0
+    for mutant in mutants:
+        target = workdir / mutant.path
+        original = target.read_bytes()
+        # Git may check files out with CRLF; match mutants against LF text.
+        text = original.decode("utf-8").replace("\r\n", "\n")
+        newline = "\r\n" if b"\r\n" in original else "\n"
+        if text.count(mutant.old) != 1:
+            print(f"STALE   {mutant.name}: mutant text no longer matches {mutant.path.name}")
+            missed += 1
+            continue
+        mutated = text.replace(mutant.old, mutant.new).replace("\n", newline)
+        target.write_bytes(mutated.encode("utf-8"))
+        try:
+            result = _run_explorer(workdir, mutant.selector)
+        finally:
+            target.write_bytes(original)
+        if result is None:
+            print(f"TIMEOUT {mutant.name}: no verdict after {TIMEOUT_SECONDS}s")
+            missed += 1
+            continue
+        found = re.search(r"Violation: (\[[^\]]+\] .+)", result.stdout)
+        if result.returncode != 0 and found:
+            print(f"CAUGHT  {mutant.name}: {found.group(1)}")
+        else:
+            print(f"MISSED  {mutant.name}")
+            print(result.stdout[-2000:])
+            print(result.stderr[-2000:])
+            missed += 1
+    return missed
+
+
+def main(argv: list[str]) -> int:
+    tiers = argv or list(TIERS)
+    unknown = sorted(set(tiers) - set(TIERS))
+    if unknown:
+        print(f"Unknown tier {', '.join(unknown)}; choose from {', '.join(TIERS)}")
+        return 2
     with tempfile.TemporaryDirectory(prefix="halo-control-mutants-") as tmp:
         workdir = Path(tmp)
         _copy_tree(workdir)
-        controls = workdir / CONTROLS
-        original = controls.read_bytes()
-        # Git may check controls.py out with CRLF; match mutants against LF text.
-        text = original.decode("utf-8").replace("\r\n", "\n")
-        newline = "\r\n" if b"\r\n" in original else "\n"
-
-        baseline = _run_explorer(workdir)
-        if baseline is None or baseline.returncode != 0:
-            reason = f"timed out after {TIMEOUT_SECONDS}s" if baseline is None else "failed"
-            print(f"BASELINE {reason}: the unmutated explorer must pass before mutants count")
-            if baseline is not None:
-                print(baseline.stdout[-4000:])
-                print(baseline.stderr[-4000:])
-            return 1
-        print("BASELINE passed")
-
-        missed = 0
-        for name, old, new in MUTANTS:
-            if text.count(old) != 1:
-                print(f"STALE   {name}: mutant text no longer matches controls.py")
-                missed += 1
-                continue
-            controls.write_bytes(text.replace(old, new).replace("\n", newline).encode("utf-8"))
-            result = _run_explorer(workdir)
-            if result is None:
-                print(f"TIMEOUT {name}: no verdict after {TIMEOUT_SECONDS}s")
-                missed += 1
-                continue
-            found = re.search(r"Violation: (\[[^\]]+\] .+)", result.stdout)
-            if result.returncode != 0 and found:
-                print(f"CAUGHT  {name}: {found.group(1)}")
-            else:
-                print(f"MISSED  {name}")
-                print(result.stdout[-2000:])
-                print(result.stderr[-2000:])
-                missed += 1
+        missed = sum(_run_tier(workdir, tier) for tier in tiers)
     return 1 if missed else 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(main(sys.argv[1:]))

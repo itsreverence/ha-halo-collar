@@ -1,6 +1,6 @@
 ---
 name: verify-control-transactions
-description: Exhaustively check the guarded write transactions (fence mode and Find collar) against every interleaving of refreshes, option changes, telemetry changes, provider outcomes, and cancellation. Use when a change touches custom_components/halo_collar/controls.py, the write path in api.py or transport.py, how switch.py/button.py call into controls, or the helpers those gates use.
+description: Exhaustively check the guarded write transactions (fence mode, Find collar, and the Recall whistle with its one-time registration) against every interleaving of refreshes, option changes, telemetry changes, storage outcomes, provider outcomes, and cancellation. Use when a change touches custom_components/halo_collar/controls.py, recall.py, the write path in api.py or transport.py, how switch.py/button.py call into controls or recall, or the helpers those gates use.
 ---
 
 The canonical, agent-neutral version of this skill lives at
