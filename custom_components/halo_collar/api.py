@@ -520,7 +520,7 @@ class HaloApiClient:
         *,
         pre_dispatch: Callable[[], None] | None = None,
     ) -> None:
-        """Ask one collar to blink and play Halo's ten-second Return Whistle.
+        """Ask one collar to blink and play Halo's find sound (not the Recall whistle).
 
         This physical command has no response body or durable confirmation state.
         It is sent at most once and is never retried after dispatch.

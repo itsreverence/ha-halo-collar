@@ -352,7 +352,7 @@ async def async_find_collar(
         [], tuple[dict[str, Any] | None, dict[str, Any] | None, dict[str, Any] | None]
     ],
 ) -> None:
-    """Execute one serialized, at-most-once Return Whistle transaction."""
+    """Execute one serialized, at-most-once Find collar transaction."""
     async with control_lock:
         _validate_find_options(entry)
 

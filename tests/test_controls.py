@@ -600,7 +600,7 @@ async def test_contradictory_transactions_share_one_collar_lock():
     assert client.writes == [("pet-1", True)]
 
 
-# Find Collar is a physical Return Whistle command, not a telemetry probe.
+# Find Collar is a physical sound-and-light command, not a telemetry probe.
 def _subscription(*, enabled=True, duplicate=False):
     feature = {"featureType": {"id": "findcollar"}, "isEnabled": enabled}
     features = [feature, dict(feature)] if duplicate else [feature]
