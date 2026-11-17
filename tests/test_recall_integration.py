@@ -317,6 +317,20 @@ async def test_ambiguous_registration_keeps_recall_off_and_is_never_resent(hass,
     )
 
 
+@pytest.mark.parametrize("content", ["null", "[]", '"registered"', "7", "", "{"])
+async def test_unreadable_state_file_never_permits_a_registration(hass, client, content):
+    entry = _entry()
+    _state_file(hass, entry).parent.mkdir(parents=True, exist_ok=True)
+    _state_file(hass, entry).write_text(content, encoding="utf-8")
+    await _setup(hass, entry)
+
+    result = await _enable_recall(hass, entry)
+
+    assert result["errors"] == {"base": "recall_storage_unavailable"}
+    assert client.registrations == []
+    assert _state_file(hass, entry).read_text(encoding="utf-8") == content
+
+
 async def test_registration_needs_a_loaded_entry(hass, client):
     entry = _entry()
     entry.add_to_hass(hass)

@@ -28,7 +28,7 @@ class RecallFileStore:
         self._hass = hass
         self._path = Path(hass.config.path(STORAGE_DIR, f"{DOMAIN}.recall.{entry_id}"))
 
-    async def async_load(self) -> Any:
+    async def async_load(self) -> dict[str, Any] | None:
         return await self._hass.async_add_executor_job(self._load)
 
     async def async_save(self, data: dict[str, Any]) -> None:
@@ -37,13 +37,17 @@ class RecallFileStore:
     async def async_remove(self) -> None:
         await self._hass.async_add_executor_job(self._remove)
 
-    def _load(self) -> Any:
+    def _load(self) -> dict[str, Any] | None:
         try:
-            return json.loads(self._path.read_text(encoding="utf-8"))
+            data = json.loads(self._path.read_text(encoding="utf-8"))
         except FileNotFoundError:
             return None
         except (OSError, ValueError) as err:
             raise RecallStorageError("Recall state could not be read") from err
+        if not isinstance(data, dict):
+            # A file holding JSON null must never read as "nothing was ever saved".
+            raise RecallStorageError("Recall state is not a saved document")
+        return data
 
     def _save(self, text: str) -> None:
         # Store.async_save can log a write error and return normally, so write directly.

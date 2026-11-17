@@ -146,8 +146,11 @@ class RecallStorageError(Exception):
 
 
 class RecallStore(Protocol):
-    async def async_load(self) -> Any:
-        """Return the saved document, or None when nothing was ever saved."""
+    async def async_load(self) -> dict[str, Any] | None:
+        """Return the saved document, or None only when nothing was ever saved.
+
+        Anything else that is not a saved document raises RecallStorageError.
+        """
 
     async def async_save(self, data: dict[str, Any]) -> None:
         """Replace the saved document atomically, raising RecallStorageError on failure."""
