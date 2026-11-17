@@ -197,6 +197,52 @@ async def test_write_success_over_real_transport(operation):
     assert result == _EXPECTED_RESULTS[operation]
 
 
+TARGETED_OPERATIONS = ["find", "fence", "recall"]
+
+
+async def _dispatch_to(client, operation, target, pre_dispatch):
+    if operation == "find":
+        return await client.async_find_collar(target, pre_dispatch=pre_dispatch)
+    if operation == "recall":
+        return await client.async_send_recall_whistle(
+            target, _RECALL_COMMAND, pre_dispatch=pre_dispatch
+        )
+    return await client.async_set_fences_enabled(target, enabled=True, pre_dispatch=pre_dispatch)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", TARGETED_OPERATIONS)
+@pytest.mark.parametrize(
+    "target", ["..", ".", ".hidden", "../pet-2", "pet/2", "pet?x=1", "pet%2F2", "", None, 7]
+)
+async def test_unsafe_target_id_is_refused_before_any_request(operation, target):
+    committed = Mock()
+    async with (
+        _write_server(operation, first_response=_success_response(operation)) as (base, received),
+        aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5)) as session,
+    ):
+        with pytest.raises(HaloApiError, match="not safe to use in a request path"):
+            await _dispatch_to(_new_client(session, base), operation, target, committed)
+
+    assert received == []
+    committed.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", TARGETED_OPERATIONS)
+@pytest.mark.parametrize("target", ["3fa85f64-5717-4562-b3fc-2c963f66afa6", "1234567", "a.b_c~d"])
+async def test_safe_target_id_is_one_path_segment(operation, target):
+    async with (
+        _write_server(operation, first_response=_success_response(operation)) as (base, received),
+        aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5)) as session,
+    ):
+        await _dispatch_to(_new_client(session, base), operation, target, Mock())
+
+    request_line, body = _expected_request(operation)
+    synthetic = "synthetic-collar" if operation == "find" else "synthetic-pet"
+    assert received == [(request_line.replace(synthetic, target), body)]
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("operation", WRITE_OPERATIONS)
 async def test_write_redirect_is_unknown_without_following_over_real_transport(operation):

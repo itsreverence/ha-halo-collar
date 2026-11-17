@@ -85,7 +85,7 @@ def _client(*, transport=None, session=None) -> HaloApiClient:
 async def _send(body, status=200):
     transport = RecordingTransport(FakeResponse(status, body))
     reply = await _client(transport=transport).async_send_recall_whistle(
-        "pet/1", COMMAND, pre_dispatch=lambda: None
+        "pet-1", COMMAND, pre_dispatch=lambda: None
     )
     return reply, transport
 
@@ -97,7 +97,7 @@ async def test_recall_posts_exactly_the_whistle_body_once():
     assert transport.requests == [
         (
             "POST",
-            "https://api.example/pet/pet%2F1/run-instant-correction",
+            "https://api.example/pet/pet-1/run-instant-correction",
             {
                 "mobileId": 7,
                 "commandNumber": 12,

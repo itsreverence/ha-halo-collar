@@ -11,7 +11,6 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from time import monotonic
 from typing import TYPE_CHECKING, Any, Literal
-from urllib.parse import quote
 
 import aiohttp
 
@@ -42,6 +41,7 @@ _RECALL_DEVICE = {
     "idiom": "unknown",
 }
 _TIMESPAN_PATTERN = re.compile(r"(?:(\d{1,8})\.)?(\d{1,2}):(\d{2}):(\d{2})(?:\.(\d{1,7}))?")
+_PATH_ID_PATTERN = re.compile(r"[A-Za-z0-9_~-][A-Za-z0-9._~-]{0,127}")
 # The Halo app's own walk-history page size. A wider window reduces one dog's walks
 # crowding another dog out on multi-dog accounts, in a single request per poll.
 WALK_HISTORY_PAGE_SIZE = 30
@@ -291,6 +291,18 @@ def _utc_wire_time(value: datetime) -> str:
     return value.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _path_id(value: Any, kind: str) -> str:
+    """Return a Halo ID that can only form one URL path segment.
+
+    Only URL-unreserved characters pass, so nothing needs escaping, and a leading dot
+    is refused: URL normalization drops a "." or ".." segment, which would send the
+    write to a different route.
+    """
+    if not isinstance(value, str) or _PATH_ID_PATTERN.fullmatch(value) is None:
+        raise HaloApiError(f"Halo {kind} ID is not safe to use in a request path")
+    return value
+
+
 class HaloApiClient:
     def __init__(
         self,
@@ -444,10 +456,8 @@ class HaloApiClient:
         Writes are deliberately not retried on 429/5xx or connection errors:
         callers must refresh state before deciding whether another write is safe.
         """
-        if not pet_id:
-            raise HaloApiError("Pet ID is required to change fence mode")
+        path = f"/pet/{_path_id(pet_id, 'pet')}/instant-mode"
         payload = {"modePatch": {"fencesOn": enabled}}
-        path = f"/pet/{quote(pet_id, safe='')}/instant-mode"
         return await self._async_write_json("PUT", path, payload, pre_dispatch=pre_dispatch)
 
     async def async_get_recall_window(self) -> timedelta:
@@ -502,15 +512,13 @@ class HaloApiClient:
         pre_dispatch: Callable[[], None],
     ) -> HaloRecallReply:
         """Ask Halo to play one pet's Recall whistle, at most once and never retried."""
-        if not isinstance(pet_id, str) or not pet_id:
-            raise HaloApiError("Pet ID must be a non-empty string to play the Recall whistle")
+        path = f"/pet/{_path_id(pet_id, 'pet')}/run-instant-correction"
         payload = {
             "mobileId": command.mobile_id,
             "commandNumber": command.command_number,
             "expirationDate": _utc_wire_time(command.expires_at),
             "correctionType": _RECALL_CORRECTION_TYPE,
         }
-        path = f"/pet/{quote(pet_id, safe='')}/run-instant-correction"
         result = await self._async_write_json("POST", path, payload, pre_dispatch=pre_dispatch)
         return _parse_recall_reply(result)
 
@@ -525,9 +533,7 @@ class HaloApiClient:
         This physical command has no response body or durable confirmation state.
         It is sent at most once and is never retried after dispatch.
         """
-        if not isinstance(collar_id, str) or not collar_id:
-            raise HaloApiError("Collar ID must be a non-empty string to find a collar")
-        path = f"/collar/{quote(collar_id, safe='')}/find"
+        path = f"/collar/{_path_id(collar_id, 'collar')}/find"
         await self._async_put_no_content(path, pre_dispatch=pre_dispatch)
 
     async def _async_put_no_content(
