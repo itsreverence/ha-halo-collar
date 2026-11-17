@@ -173,13 +173,11 @@ def registration_state_name(registration: Registration | None) -> str:
     return "unavailable" if registration is None else _STATE_NAMES[type(registration)]
 
 
-def recall_pet_collars(state: HaloState) -> dict[str, dict[str, Any]]:
-    """Pets that name a collar in this snapshot, with that collar for device placement."""
-    collars = {collar["id"]: collar for collar in state.collars}
+def recall_wearers(state: HaloState) -> dict[str, dict[str, Any] | None]:
+    """Every dog in this snapshot, with the collar a press would whistle, or None."""
     return {
-        pet["id"]: collars[collar_id]
+        pet["id"]: None if (resolved := _resolve(state, pet["id"])) is None else resolved[1]
         for pet in state.pets
-        if isinstance(collar_id := nested(pet, "collarInfo", "id"), str) and collar_id in collars
     }
 
 

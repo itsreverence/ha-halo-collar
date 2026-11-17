@@ -7,18 +7,40 @@ from pathlib import Path
 from typing import Any
 
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.storage import STORAGE_DIR
 from homeassistant.util.file import write_utf8_file_atomic
 
+from .api import HaloState
 from .const import CONF_EMAIL, DOMAIN
 from .controls import control_lock_for
-from .recall import RecallOwner, RecallStorageError, recall_account_binding
+from .recall import RecallOwner, RecallStorageError, recall_account_binding, recall_wearers
 
 _RECALL_OWNERS = "_recall_owners"
+RECALL_BUTTON_SUFFIX = "_recall_whistle"
 
 
 def recall_status_signal(entry_id: str, pet_id: str) -> str:
     return f"{DOMAIN}_{entry_id}_{pet_id}_recall_status"
+
+
+def recall_dogs(hass, entry, state: HaloState) -> dict[str, dict[str, Any] | None]:
+    """Dogs that get Recall entities, each with the collar it wears exactly, or None.
+
+    A dog that already has a Recall button keeps it while it wears no collar, so an
+    automation that presses it gets an error. Home Assistant skips a missing entity
+    without one.
+    """
+    known = {
+        item.unique_id.removesuffix(RECALL_BUTTON_SUFFIX)
+        for item in er.async_entries_for_config_entry(er.async_get(hass), entry.entry_id)
+        if item.domain == "button" and item.unique_id.endswith(RECALL_BUTTON_SUFFIX)
+    }
+    return {
+        pet_id: collar
+        for pet_id, collar in recall_wearers(state).items()
+        if collar is not None or pet_id in known
+    }
 
 
 class RecallFileStore:

@@ -297,6 +297,25 @@ async def test_refusals_raise_while_the_button_stays_callable(hass, client):
     assert client.sent == []
 
 
+@pytest.mark.parametrize("both_sides", [False, True], ids=["pet_side", "both_sides"])
+async def test_dog_that_lost_its_collar_keeps_a_button_that_raises(hass, client, both_sides):
+    entry = await _registered(hass)
+    button = _entity_id(hass, "button", "pet-1_recall_whistle")
+    client.state.pets[0].pop("collarInfo")
+    if both_sides:
+        client.state.collars[0].pop("petInfo")
+
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert hass.states.get(button).state != STATE_UNAVAILABLE
+    assert er.async_get(hass).async_get(button).device_id is None
+    assert _status(hass) == "mapping_unavailable"
+    with pytest.raises(HomeAssistantError, match="mapping is unavailable"):
+        await _press(hass)
+    assert client.sent == []
+
+
 def _start_walk(client, number: int = 1) -> None:
     client.state.pets[number - 1]["collarInfo"]["telemetry"]["walk"] = {"startTime": "now"}
     client.state.collars[number - 1]["telemetry"]["walk"] = {"startTime": "now"}

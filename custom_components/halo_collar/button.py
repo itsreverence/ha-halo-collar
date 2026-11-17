@@ -26,10 +26,14 @@ from .controls import (
     find_collar_cooldowns_for,
     live_runtime_check,
 )
-from .entity import HaloEntity
+from .entity import HaloDogEntity, HaloEntity
 from .helpers import has_active_walk, is_online, subscription_feature_enabled
-from .recall import recall_pet_collars
-from .recall_runtime import recall_owner_for, recall_status_signal
+from .recall_runtime import (
+    RECALL_BUTTON_SUFFIX,
+    recall_dogs,
+    recall_owner_for,
+    recall_status_signal,
+)
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
@@ -75,7 +79,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
             HaloRecallWhistleButton(
                 coordinator, entry, stored["client"], collar, pet_id, recall, is_current
             )
-            for pet_id, collar in recall_pet_collars(coordinator.data).items()
+            for pet_id, collar in recall_dogs(hass, entry, coordinator.data).items()
         )
     async_add_entities(entities)
 
@@ -215,19 +219,18 @@ class HaloFindCollarButton(HaloEntity, ButtonEntity):
             self._schedule_cooldown_update()
 
 
-class HaloRecallWhistleButton(HaloEntity, ButtonEntity):
+class HaloRecallWhistleButton(HaloDogEntity, ButtonEntity):
     """Plays one dog's trained Recall whistle. Keyed by dog, placed on its collar device."""
 
     _attr_translation_key = "recall_whistle"
     _attr_icon = "mdi:whistle"
 
     def __init__(self, coordinator, entry, client, collar, pet_id: str, recall, is_current) -> None:
-        super().__init__(coordinator, entry, collar)
+        super().__init__(coordinator, entry, collar, pet_id)
         self._client = client
-        self._pet_id = pet_id
         self._recall = recall
         self._is_current = is_current
-        self._attr_unique_id = f"{pet_id}_recall_whistle"
+        self._attr_unique_id = f"{pet_id}{RECALL_BUTTON_SUFFIX}"
 
     @property
     def available(self) -> bool:  # pyright: ignore[reportIncompatibleVariableOverride]

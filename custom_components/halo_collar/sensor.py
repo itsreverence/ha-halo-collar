@@ -39,7 +39,7 @@ from .controls import (
     find_collar_cooldowns_for,
     telemetry_stale_after,
 )
-from .entity import HaloEntity
+from .entity import HaloDogEntity, HaloEntity
 from .helpers import WalkSummary as _WalkSummary
 from .helpers import active_walk_distance as _active_walk_distance
 from .helpers import active_walk_duration as _active_walk_duration
@@ -61,8 +61,8 @@ from .helpers import pretty_status as _pretty_status
 from .helpers import reported_activity_options as _reported_activity_options
 from .helpers import seconds_to_hours as _seconds_to_hours
 from .helpers import telemetry as _telemetry
-from .recall import RecallReason, recall_pet_collars, recall_serial
-from .recall_runtime import recall_owner_for, recall_status_signal
+from .recall import RecallReason, recall_serial
+from .recall_runtime import recall_dogs, recall_owner_for, recall_status_signal
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -285,7 +285,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
         recall = recall_owner_for(hass, entry)
         entities.extend(
             HaloRecallStatusSensor(coordinator, entry, collar, pet_id, recall)
-            for pet_id, collar in recall_pet_collars(coordinator.data).items()
+            for pet_id, collar in recall_dogs(hass, entry, coordinator.data).items()
         )
     async_add_entities(entities)
 
@@ -359,7 +359,7 @@ class HaloControlStatusSensor(HaloEntity, SensorEntity):
         super()._handle_coordinator_update()
 
 
-class HaloRecallStatusSensor(HaloEntity, SensorEntity):
+class HaloRecallStatusSensor(HaloDogEntity, SensorEntity):
     """Advisory Recall readiness for one dog from cached state. Never authorizes a press."""
 
     _attr_device_class = SensorDeviceClass.ENUM
@@ -369,8 +369,7 @@ class HaloRecallStatusSensor(HaloEntity, SensorEntity):
     _attr_translation_key = "recall_whistle_status"
 
     def __init__(self, coordinator, entry, collar, pet_id: str, recall) -> None:
-        super().__init__(coordinator, entry, collar)
-        self._pet_id = pet_id
+        super().__init__(coordinator, entry, collar, pet_id)
         self._recall = recall
         self._cancel_expiry: Callable[[], None] | None = None
         self._attr_unique_id = f"{pet_id}_recall_whistle_status"

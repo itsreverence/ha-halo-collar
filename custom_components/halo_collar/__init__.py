@@ -88,7 +88,7 @@ async def async_setup_entry(hass, entry) -> bool:
     from homeassistant.util.ssl import client_context
 
     from .api import HaloApiClient, HaloApiError, HaloAuthError
-    from .recall import recall_pet_collars
+    from .recall import recall_wearers
     from .recall_runtime import recall_owner_for
     from .transport import HaloWriteTransport
 
@@ -156,9 +156,14 @@ async def async_setup_entry(hass, entry) -> bool:
             for collar in coordinator.data.collars
             if isinstance(collar.get("id"), str) and collar.get("id")
         }
-        known_recall_pet_ids = (
-            set(recall_pet_collars(coordinator.data)) if recall_enabled else set()
-        )
+
+        def _placed_recall_dogs() -> set[str]:
+            if not recall_enabled:
+                return set()
+            wearers = recall_wearers(coordinator.data)
+            return {pet_id for pet_id, collar in wearers.items() if collar is not None}
+
+        known_recall_pet_ids = _placed_recall_dogs()
         inventory_reload_pending = False
 
         def _reload_for_new_collars() -> None:
@@ -170,9 +175,7 @@ async def async_setup_entry(hass, entry) -> bool:
                 for collar in coordinator.data.collars
                 if isinstance(collar.get("id"), str) and collar.get("id")
             }
-            new_recall_pets = recall_enabled and bool(
-                set(recall_pet_collars(coordinator.data)) - known_recall_pet_ids
-            )
+            new_recall_pets = bool(_placed_recall_dogs() - known_recall_pet_ids)
             if current_collar_ids - known_collar_ids or new_recall_pets:
                 inventory_reload_pending = True
                 async_request_reload(hass, entry)

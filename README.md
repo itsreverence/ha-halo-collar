@@ -101,7 +101,7 @@ Open **Configure** on the integration under **Settings > Devices & services**.
 | **Enable fail-safe fence controls** | Off. Adds **Enable fences**, which can restore fence enforcement but cannot disable it. |
 | **Allow fences to be disabled (requires fence controls)** | Off. Also requires **Enable fail-safe fence controls**. Adds **Fence mode**, which can disable containment, including through automations. Active or unknown walks block fence-off. |
 | **Enable Find collar sound and light** | Off. Adds **Find collar (sound and light)** to request a sound and light command. It may confuse a pet wearing the collar. It requires fresh exact mapping, subscription entitlement, and no active or unknown walk. Every attempted dispatch starts a 60-second cooldown, including failed or ambiguous outcomes. Provider acceptance does not verify physical execution. |
-| **Enable Recall whistle (beta)** | Off. Adds a **Recall whistle** button for each dog. Turning it on first asks you to register Home Assistant with Halo, a permanent account change. See [Recall whistle (beta)](#recall-whistle-beta). |
+| **Enable Recall whistle (beta)** | Off. Adds a **Recall whistle** button for each dog that wears a Halo collar. Turning it on first asks you to register Home Assistant with Halo, a permanent account change. See [Recall whistle (beta)](#recall-whistle-beta). |
 
 Controls require telemetry no older than the shorter of **Collar report age limit** and 900 seconds. Fence changes require synchronized reported-state confirmation. Commands are sent at most once and are never replayed after an ambiguous result.
 
@@ -130,7 +130,9 @@ actions:
       entity_id: button.example_dog_recall_whistle
 ```
 
-The button stays pressable even when a press would be refused, so a refusal shows as an error in the automation trace instead of being skipped silently. Each dog's **Recall whistle status** sensor under **Diagnostic** shows the cached reason a press would be refused, or **Ready to try**.
+The button stays pressable even when a press would be refused, so a refusal shows as an error in the automation trace instead of being skipped silently. Each dog's **Recall whistle status** sensor under **Diagnostic** shows the cached reason a press would be refused, or **Ready to try**. A dog keeps its button while Halo reports no collar for it; a press then fails with that reason.
+
+One case is silent. While the integration itself is not loaded, for example while Home Assistant retries setup after Halo was unreachable at startup, Home Assistant has no Recall buttons and skips `button.press` without an error. If an automation must know, add a condition that the button's state is not `unavailable` and notify yourself otherwise.
 
 #### Recall whistle recovery
 
