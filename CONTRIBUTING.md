@@ -99,6 +99,6 @@ Keep changes narrowly scoped and explain:
 - tests added or updated;
 - the commands you ran.
 
-Halo Collar is telemetry-first, and all writes are opt-in. Do not add corrections, fence geometry changes, collar commands, walk lifecycle actions, or bind/unbind endpoints without a separate explicit safety review and fail-closed tests.
+Halo Collar is telemetry-first, and all writes are opt-in. Do not add correction types other than the Recall whistle, fence geometry changes, collar commands, walk lifecycle actions, account writes, or bind/unbind endpoints without a separate explicit safety review and fail-closed tests.
 
 Maintainers use [docs/RELEASING.md](docs/RELEASING.md) for releases.

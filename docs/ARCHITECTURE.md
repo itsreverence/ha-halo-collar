@@ -20,10 +20,13 @@ Home Assistant config entry (email, tokens, expiry, OAuth client settings; no pa
   -> platforms expose telemetry entities plus disabled-by-default controls
      -> fence mode: one PUT /pet/{id}/instant-mode with {modePatch: {fencesOn: bool}}
      -> Find collar: one bodyless PUT /collar/{id}/find; requests sound and light
+     -> Recall whistle (beta): one GET /configuration, then one POST /pet/{id}/run-instant-correction
+        whose correctionType is always "returnwhistle"
+     -> Recall registration: one POST /account/mobile-data, only from the confirmed options flow
      -> all physical commands serialized per config entry across option-triggered reloads
      -> redirects disabled; no write replay after an ambiguous HTTP/network result, including 401
      -> fresh preflight and dispatch-boundary revalidation for exact identity, options, and telemetry
-     -> fence writes reconcile reported state; Find collar has no durable confirmation state and retains a cooldown after every dispatch
+     -> fence writes reconcile reported state; Find collar and Recall have no durable confirmation state and retain a cooldown after every dispatch
 ```
 
 ## Platforms
@@ -32,11 +35,11 @@ Home Assistant config entry (email, tokens, expiry, OAuth client settings; no pa
 - `binary_sensor`: connectivity (staleness threshold configurable via options), fence breach, fence mode, fence synchronization, GPS calibration required, compass calibration required, active walk/paused state, diagnostic-reporting reliability, a fail-closed hardware issue summary with bounded allowlisted labels, and firmware update availability.
 - `device_tracker`: provider GPS coordinates with an indoor Home state override. When `gpsAccuracyStatus` is `indoors` and `currentAdapter` is `wifi`, the tracker forces Home zone membership through `in_zones`, or `location_name` on older Home Assistant versions. These indicators do not verify the SSID or physical home location. Latitude and longitude remain the provider coordinates.
 - `event`: fence breach event entity for automation triggers.
-- `button`: fail-safe idempotent fence enable after the fence-control opt-in; separately opted-in Find collar physical Return Whistle after fresh identity/telemetry/entitlement checks and subject to a post-dispatch cooldown.
+- `button`: fail-safe idempotent fence enable after the fence-control opt-in; separately opted-in Find collar physical Return Whistle after fresh identity/telemetry/entitlement checks and subject to a post-dispatch cooldown; separately opted-in Recall whistle per dog (beta), placed on the dog's collar device.
 - `switch`: full fence mode including disable, available only after the separate high-risk opt-in.
 - `diagnostics`: redacted config-entry diagnostics (tokens, serials, coordinates, names removed).
 
-Opted-in actions also add enum status sensors in the diagnostic category. A pure classifier derives advisory reasons from cached state, current options, the shared freshness cap, and the existing cooldown map. Status sensors remain available through cloud and mapping failures. Their values never authorize dispatch or confirm physical execution.
+Opted-in actions also add enum status sensors in the diagnostic category. A pure classifier derives advisory reasons from cached state, current options, the shared freshness cap, and the existing cooldown map. Status sensors remain available through cloud and mapping failures. Their values never authorize dispatch or confirm physical execution. The Recall whistle status uses `classify_recall`, the same function its press runs on fresh state, so the advice and the gate cannot drift apart.
 
 The Find status sensor owns one local expiry timer, independently of the button. An entry-and-collar-scoped dispatcher notification reaches the current sensor when an older button transaction finishes after a reload. Timer expiry and status evaluation make no Halo requests. Report-age changes appear on the next state update rather than through a dedicated expiry timer.
 
@@ -110,9 +113,24 @@ Fence changes require fresh synchronized reported-state confirmation. Fence-off 
 
 Find collar requests the physical Return Whistle sound and light command. It may confuse a pet wearing the collar. It requires its own opt-in, enabled `findcollar` entitlement, fresh exact mapping, and no active or unknown walk. A reload-stable per-collar **60-second cooldown** starts immediately before every attempted dispatch, including failed or ambiguous outcomes. The endpoint exposes no durable sound/light confirmation state. An unambiguous provider success means command acceptance, not verified physical execution. A 404 or ambiguous result remains an error and is never retried.
 
-Each PUT owns a fresh session and connector that refuses a second connection lease. This blocks aiohttp's disconnected-PUT replay path on the dependency versions covered by the socket tests. Write sessions preserve Home Assistant's verified TLS context, default headers, and `trust_env` policy, but use the system threaded resolver instead of Home Assistant's shared DNS cache and connection pool. Resource preparation precedes the dispatch callback; all write resources close with the request. The shared telemetry session is unchanged.
+Each write (PUT or POST) owns a fresh session and connector that refuses a second connection lease. This blocks aiohttp's disconnected-request replay path on the dependency versions covered by the socket tests. Write sessions preserve Home Assistant's verified TLS context, default headers, and `trust_env` policy, but use the system threaded resolver instead of Home Assistant's shared DNS cache and connection pool. Resource preparation precedes the dispatch callback; all write resources close with the request. The shared telemetry session is unchanged.
 
-Do not add corrections, fence geometry writes, other collar wake/control actions, bind/unbind, account mutation, or proprietary BLE walk-start behavior without a separate explicit review.
+### Recall whistle (beta)
+
+The Recall whistle plays a dog's trained Recall sound through Halo's instant-correction endpoint. That endpoint also delivers warnings and static, so the type is structural: `api.py` holds `"returnwhistle"` as one private constant, `HaloRecallCommand` has no type field, and no option, argument, or service field can choose another type. Tests pin the exact four-key body, and a control mutant proves the explorer catches any other value.
+
+One `RecallOwner` per config entry, kept across reloads like the control lock, owns all Recall state:
+
+- **Registration.** Halo accepts the command only from a registered mobile device. The options flow shows a separate confirmation step; only that step calls `async_register`. It saves an intent marker, sends one `POST /account/mobile-data` describing Home Assistant (platform and idiom `unknown`, no phone model), and saves the returned `mobileId`. A failure known to precede dispatch clears the marker. An ambiguous outcome, a lost result, or a marker found after a restart leaves registration needing recovery, and no further request is ever sent for that entry. Halo has no route to remove a registration.
+- **Command numbers.** Halo keys its sequence by mobile ID and collar serial and rejects reused or lower numbers. The owner saves `next = n + 1` for the target serial before sending `n`, so a number is never sent twice, even after an ambiguous result. A skipped number is harmless. An `OldCommandNumber` reply raises the saved floor to Halo's number plus one and is not retried.
+- **Storage.** One versioned private file per entry under Home Assistant's storage directory, written atomically in the executor with write errors propagated. It is bound to a hash of the account email. An unreadable, foreign, or malformed file fails closed and never becomes a fresh registration. Removing the entry deletes it under the control lock.
+- **Cooldown.** A per-serial 60-second monotonic cooldown starts at the dispatch boundary for every attempted send. Loading an existing registration after a restart starts a 60-second hold for every collar, because a dispatch just before the restart left no cooldown in memory.
+
+A press, under the shared control lock, checks the opt-in and registration, reads `correction.runPositiveCorrectionExpiration` from `GET /configuration` (a .NET TimeSpan or seconds; missing or malformed refuses), forces a refresh, and classifies the fresh snapshot. It requires the exact pet, its collar, and a unique serial that all name each other; a fresh report; an explicitly inactive walk in both payloads; firmware feature `CorrectionMethodsWithIdAndExpiration`; an unexhausted counter; and no cooldown. The expiry is the server time from that refresh plus the shorter of Halo's window and 30 seconds, floored to the second. The press then saves the spent number and, immediately before the one POST, reclassifies the current snapshot, requires the same pet, collar, and serial, requires at least two seconds of remaining lifetime measured from when the server-time request started, and commits the cooldown. Only a well-formed 2xx `Success` returns normally; `OldCommandNumber`, `CommandExpired`, and every ambiguous outcome raise. Cancellation after dispatch waits for the reply and any resync save.
+
+The button stays available whenever it is loaded. Home Assistant skips unavailable entities in a `button.press` call without an error, so a gated button would make an automation's whistle vanish silently. Every refusal raises a `HomeAssistantError` with its reason instead. The status sensor is the readiness preview. Both are keyed by pet ID, so an automation keeps targeting the same dog after a collar swap.
+
+Do not add other correction types, fence geometry writes, other collar wake/control actions, bind/unbind, other account mutation, or proprietary BLE walk-start behavior without a separate explicit review.
 
 ## Error handling
 
@@ -147,7 +165,7 @@ same entity IDs.
 ## Privacy boundary
 
 Config-entry diagnostics recursively redact generic provider IDs, names,
-serials, hardware UUIDs, reporting-collar and current-fence IDs, signed pet icon and report URLs, coordinates, credentials, and account fields. Stable collar IDs and
+serials, hardware UUIDs, reporting-collar and current-fence IDs, signed pet icon and report URLs, coordinates, credentials, and account fields. Diagnostics report only the Recall registration state name; the mobile ID, collar serials, and command numbers stay in the private Recall file. Stable collar IDs and
 the local display name remain in Home Assistant's private device/entity
 registries because they provide durable identity and usable household labels;
 those local registries and backups must be protected as household data and are
