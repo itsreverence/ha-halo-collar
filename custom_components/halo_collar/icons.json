@@ -65,6 +65,9 @@
       },
       "find_collar_status": {
         "default": "mdi:bell-ring-outline"
+      },
+      "recall_whistle_status": {
+        "default": "mdi:whistle-outline"
       }
     },
     "binary_sensor": {

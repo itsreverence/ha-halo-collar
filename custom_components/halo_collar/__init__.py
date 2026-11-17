@@ -12,6 +12,7 @@ from .const import (
     CONF_CLIENT_SECRET,
     CONF_ENABLE_FENCE_CONTROLS,
     CONF_ENABLE_FIND_COLLAR,
+    CONF_ENABLE_RECALL_WHISTLE,
     CONF_EXPIRES_AT,
     CONF_REFRESH_TOKEN,
     CONF_SCAN_INTERVAL,
@@ -70,11 +71,12 @@ def _scan_interval(entry) -> timedelta:
     return timedelta(seconds=int(seconds))
 
 
-def _controls_signature(entry) -> tuple[bool, bool, bool]:
+def _controls_signature(entry) -> tuple[bool, bool, bool, bool]:
     return (
         bool(entry.options.get(CONF_ENABLE_FENCE_CONTROLS, False)),
         bool(entry.options.get(CONF_ENABLE_FIND_COLLAR, False)),
         bool(entry.options.get(CONF_ALLOW_FENCE_DISABLE, False)),
+        bool(entry.options.get(CONF_ENABLE_RECALL_WHISTLE, False)),
     )
 
 
@@ -86,6 +88,8 @@ async def async_setup_entry(hass, entry) -> bool:
     from homeassistant.util.ssl import client_context
 
     from .api import HaloApiClient, HaloApiError, HaloAuthError
+    from .recall import recall_pet_collars
+    from .recall_runtime import recall_owner_for
     from .transport import HaloWriteTransport
 
     session = async_get_clientsession(hass)
@@ -131,6 +135,9 @@ async def async_setup_entry(hass, entry) -> bool:
             update_interval=_scan_interval(entry),
         )
         await coordinator.async_config_entry_first_refresh()
+        recall_enabled = bool(entry.options.get(CONF_ENABLE_RECALL_WHISTLE, False))
+        if recall_enabled:
+            await recall_owner_for(hass, entry).async_load()
         hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
             "client": client,
             "coordinator": coordinator,
@@ -149,6 +156,9 @@ async def async_setup_entry(hass, entry) -> bool:
             for collar in coordinator.data.collars
             if isinstance(collar.get("id"), str) and collar.get("id")
         }
+        known_recall_pet_ids = (
+            set(recall_pet_collars(coordinator.data)) if recall_enabled else set()
+        )
         inventory_reload_pending = False
 
         def _reload_for_new_collars() -> None:
@@ -160,7 +170,10 @@ async def async_setup_entry(hass, entry) -> bool:
                 for collar in coordinator.data.collars
                 if isinstance(collar.get("id"), str) and collar.get("id")
             }
-            if current_collar_ids - known_collar_ids:
+            new_recall_pets = recall_enabled and bool(
+                set(recall_pet_collars(coordinator.data)) - known_recall_pet_ids
+            )
+            if current_collar_ids - known_collar_ids or new_recall_pets:
                 inventory_reload_pending = True
                 async_request_reload(hass, entry)
 
@@ -237,8 +250,12 @@ class _TokenWriter:
 
 async def async_remove_entry(hass, entry) -> None:
     """Remove durable control state after permanent config-entry deletion."""
-    from .controls import remove_control_lock
+    from .controls import control_lock_for, remove_control_lock
+    from .recall_runtime import async_remove_recall_state
 
+    # Wait for any in-flight Recall write so it cannot recreate the file afterwards.
+    async with control_lock_for(hass.data.setdefault(DOMAIN, {}), entry.entry_id):
+        await async_remove_recall_state(hass, entry)
     remove_control_lock(hass.data.get(DOMAIN, {}), entry.entry_id)
 
 

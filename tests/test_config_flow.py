@@ -29,6 +29,7 @@ from custom_components.halo_collar.const import (
     CONF_EMAIL,
     CONF_ENABLE_FENCE_CONTROLS,
     CONF_ENABLE_FIND_COLLAR,
+    CONF_ENABLE_RECALL_WHISTLE,
     CONF_EXPIRES_AT,
     CONF_PASSWORD,
     CONF_REFRESH_TOKEN,
@@ -238,6 +239,7 @@ async def test_options_flow_disabling_controls_revokes_disable_permission(hass):
         CONF_ENABLE_FENCE_CONTROLS: False,
         CONF_ENABLE_FIND_COLLAR: True,
         CONF_ALLOW_FENCE_DISABLE: False,
+        CONF_ENABLE_RECALL_WHISTLE: False,
     }
 
 

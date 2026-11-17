@@ -17,6 +17,7 @@ from custom_components.halo_collar.const import (
     CONF_ALLOW_FENCE_DISABLE,
     CONF_ENABLE_FENCE_CONTROLS,
     CONF_ENABLE_FIND_COLLAR,
+    CONF_ENABLE_RECALL_WHISTLE,
     CONF_SCAN_INTERVAL,
     CONF_STALE_AFTER,
     DEFAULT_SCAN_INTERVAL_SECONDS,
@@ -78,6 +79,7 @@ def test_options_flow_opens_against_minimum_ha_api():
         CONF_ENABLE_FENCE_CONTROLS: False,
         CONF_ENABLE_FIND_COLLAR: False,
         CONF_ALLOW_FENCE_DISABLE: False,
+        CONF_ENABLE_RECALL_WHISTLE: False,
     }
 
 

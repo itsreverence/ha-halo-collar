@@ -6,6 +6,7 @@ from typing import Any
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.const import CONF_NAME
+from homeassistant.const import __version__ as HA_VERSION
 from homeassistant.core import callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.selector import TextSelector, TextSelectorConfig, TextSelectorType
@@ -17,9 +18,11 @@ from .const import (
     CONF_ALLOW_FENCE_DISABLE,
     CONF_CLIENT_ID,
     CONF_CLIENT_SECRET,
+    CONF_CONFIRM_RECALL_REGISTRATION,
     CONF_EMAIL,
     CONF_ENABLE_FENCE_CONTROLS,
     CONF_ENABLE_FIND_COLLAR,
+    CONF_ENABLE_RECALL_WHISTLE,
     CONF_EXPIRES_AT,
     CONF_PASSWORD,
     CONF_REFRESH_TOKEN,
@@ -32,6 +35,7 @@ from .const import (
     DEFAULT_CLIENT_SECRET,
     DEFAULT_ENABLE_FENCE_CONTROLS,
     DEFAULT_ENABLE_FIND_COLLAR,
+    DEFAULT_ENABLE_RECALL_WHISTLE,
     DEFAULT_SCAN_INTERVAL_SECONDS,
     DEFAULT_STALE_AFTER_SECONDS,
     DEFAULT_TOKEN_SCOPE,
@@ -41,6 +45,9 @@ from .const import (
     MIN_SCAN_INTERVAL_SECONDS,
     MIN_STALE_AFTER_SECONDS,
 )
+from .controls import HaloControlError
+from .recall import Registered, registration_state_name
+from .recall_runtime import recall_owner_for
 
 _ACCOUNT_RECOVERY_URL = (
     "https://github.com/itsreverence/ha-halo-collar/blob/main/SUPPORT.md#recover-authentication"
@@ -197,11 +204,27 @@ class HaloCollarConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
 
 
+_REGISTRATION_ERRORS = {
+    "unavailable": "recall_storage_unavailable",
+    "unregistered": "registration_failed",
+    "pending": "registration_uncertain",
+    "uncertain": "registration_uncertain",
+}
+
+
 class HaloCollarOptionsFlow(config_entries.OptionsFlow):
+    _options: dict[str, Any]
+
     async def async_step_init(self, user_input: dict[str, Any] | None = None):
         if user_input is not None:
             if not user_input.get(CONF_ENABLE_FENCE_CONTROLS):
                 user_input[CONF_ALLOW_FENCE_DISABLE] = False
+            if user_input.get(CONF_ENABLE_RECALL_WHISTLE):
+                recall = recall_owner_for(self.hass, self.config_entry)
+                await recall.async_load()
+                if not isinstance(recall.registration, Registered):
+                    self._options = user_input
+                    return await self.async_step_recall_registration()
             return self.async_create_entry(title="", data=user_input)
 
         options = self.config_entry.options
@@ -237,6 +260,46 @@ class HaloCollarOptionsFlow(config_entries.OptionsFlow):
                         CONF_ALLOW_FENCE_DISABLE,
                         default=options.get(CONF_ALLOW_FENCE_DISABLE, DEFAULT_ALLOW_FENCE_DISABLE),
                     ): bool,
+                    vol.Required(
+                        CONF_ENABLE_RECALL_WHISTLE,
+                        default=options.get(
+                            CONF_ENABLE_RECALL_WHISTLE, DEFAULT_ENABLE_RECALL_WHISTLE
+                        ),
+                    ): bool,
                 }
             ),
         )
+
+    async def async_step_recall_registration(self, user_input: dict[str, Any] | None = None):
+        """Register Home Assistant with Halo once, only after explicit confirmation."""
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            if not user_input.get(CONF_CONFIRM_RECALL_REGISTRATION):
+                errors["base"] = "registration_not_confirmed"
+            elif (error := await self._async_register_recall()) is not None:
+                errors["base"] = error
+            else:
+                return self.async_create_entry(title="", data=self._options)
+        return self.async_show_form(
+            step_id="recall_registration",
+            data_schema=vol.Schema(
+                {vol.Required(CONF_CONFIRM_RECALL_REGISTRATION, default=False): bool}
+            ),
+            errors=errors,
+        )
+
+    async def _async_register_recall(self) -> str | None:
+        entry = self.config_entry
+        runtime = self.hass.data.get(DOMAIN, {}).get(entry.entry_id)
+        if runtime is None:
+            return "integration_not_loaded"
+        recall = recall_owner_for(self.hass, entry)
+        try:
+            await recall.async_register(
+                client=runtime["client"],
+                version_string=HA_VERSION,
+                is_current=lambda: self.hass.data.get(DOMAIN, {}).get(entry.entry_id) is runtime,
+            )
+        except (HaloApiError, HaloControlError):
+            return _REGISTRATION_ERRORS[registration_state_name(recall.registration)]
+        return None

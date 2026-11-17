@@ -4,6 +4,8 @@ from typing import Any
 
 from .const import DOMAIN
 from .helpers import redact
+from .recall import registration_state_name
+from .recall_runtime import existing_recall_owner
 
 _WALK_DIAGNOSTIC_KEYS = ("walkedDurationInSeconds", "walkedDistanceInMeters", "feedbacksCount")
 
@@ -26,6 +28,7 @@ def _walk_history_diagnostics(walks: list[Any]) -> list[dict[str, Any]]:
 async def async_get_config_entry_diagnostics(hass, entry) -> dict[str, Any]:
     stored = hass.data[DOMAIN][entry.entry_id]
     state = stored["coordinator"].data
+    recall = existing_recall_owner(hass, entry)
     return {
         "entry": {"data": redact(dict(entry.data)), "options": dict(entry.options)},
         "pets": redact(state.pets),
@@ -34,4 +37,8 @@ async def async_get_config_entry_diagnostics(hass, entry) -> dict[str, Any]:
         "server_time": state.server_time,
         "walk_history_status": state.walk_history_status,
         "walk_history": _walk_history_diagnostics(state.walks),
+        # Only the registration state: the mobile ID, serials, and counters stay local.
+        "recall_whistle_registration": (
+            "not_loaded" if recall is None else registration_state_name(recall.registration)
+        ),
     }

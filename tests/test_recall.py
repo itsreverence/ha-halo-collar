@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import uuid
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -209,6 +211,15 @@ async def rig(clock):
 
 def test_every_refusal_reason_has_a_message():
     assert set(REFUSALS) == set(RecallReason) - {RecallReason.READY}
+
+
+def test_every_status_state_is_translated():
+    root = Path(__file__).resolve().parents[1] / "custom_components" / "halo_collar"
+    strings = json.loads((root / "strings.json").read_text())
+    assert strings == json.loads((root / "translations" / "en.json").read_text())
+    states = strings["entity"]["sensor"]["recall_whistle_status"]["state"]
+    assert set(states) == set(RecallReason)
+    assert states["ready"] == "Ready to try"
 
 
 async def test_uncontested_press_spends_the_number_before_one_request(rig):

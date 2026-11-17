@@ -25,7 +25,7 @@ from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .api import HaloState
-from .const import DOMAIN
+from .const import CONF_ENABLE_RECALL_WHISTLE, DOMAIN
 from .control_status import (
     ControlAction,
     ControlReason,
@@ -61,6 +61,8 @@ from .helpers import pretty_status as _pretty_status
 from .helpers import reported_activity_options as _reported_activity_options
 from .helpers import seconds_to_hours as _seconds_to_hours
 from .helpers import telemetry as _telemetry
+from .recall import RecallReason, recall_pet_collars, recall_serial
+from .recall_runtime import recall_owner_for, recall_status_signal
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -279,6 +281,12 @@ async def async_setup_entry(hass, entry, async_add_entities):
             for collar in coordinator.data.collars
             for action in actions
         )
+    if entry.options.get(CONF_ENABLE_RECALL_WHISTLE, False):
+        recall = recall_owner_for(hass, entry)
+        entities.extend(
+            HaloRecallStatusSensor(coordinator, entry, collar, pet_id, recall)
+            for pet_id, collar in recall_pet_collars(coordinator.data).items()
+        )
     async_add_entities(entities)
 
 
@@ -348,6 +356,72 @@ class HaloControlStatusSensor(HaloEntity, SensorEntity):
     def _handle_coordinator_update(self) -> None:
         if self._action == "find_collar":
             self._schedule_expiry()
+        super()._handle_coordinator_update()
+
+
+class HaloRecallStatusSensor(HaloEntity, SensorEntity):
+    """Advisory Recall readiness for one dog from cached state. Never authorizes a press."""
+
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = list(RecallReason)
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_extra_state_attributes = {"advisory": True}
+    _attr_translation_key = "recall_whistle_status"
+
+    def __init__(self, coordinator, entry, collar, pet_id: str, recall) -> None:
+        super().__init__(coordinator, entry, collar)
+        self._pet_id = pet_id
+        self._recall = recall
+        self._cancel_expiry: Callable[[], None] | None = None
+        self._attr_unique_id = f"{pet_id}_recall_whistle_status"
+
+    @property
+    def available(self) -> bool:
+        return True
+
+    @property
+    def native_value(self) -> str:
+        return self._recall.status(
+            cast(HaloState, self.coordinator.data),
+            self._pet_id,
+            entry=self._entry,
+            cloud_success=self.coordinator.last_update_success,
+        )
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        self.async_on_remove(
+            async_dispatcher_connect(
+                self.hass,
+                recall_status_signal(self._entry.entry_id, self._pet_id),
+                self._handle_coordinator_update,
+            )
+        )
+        self.async_on_remove(self._cancel_expiry_timer)
+        self._schedule_expiry()
+
+    @callback
+    def _cancel_expiry_timer(self) -> None:
+        if self._cancel_expiry is not None:
+            self._cancel_expiry()
+            self._cancel_expiry = None
+
+    @callback
+    def _schedule_expiry(self) -> None:
+        self._cancel_expiry_timer()
+        serial = recall_serial(cast(HaloState, self.coordinator.data), self._pet_id)
+        remaining = 0.0 if serial is None else self._recall.cooldown_remaining(serial)
+        if remaining > 0:
+            self._cancel_expiry = async_call_later(self.hass, remaining, self._cooldown_expired)
+
+    @callback
+    def _cooldown_expired(self, _now) -> None:
+        self._cancel_expiry = None
+        self._handle_coordinator_update()
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        self._schedule_expiry()
         super()._handle_coordinator_update()
 
 

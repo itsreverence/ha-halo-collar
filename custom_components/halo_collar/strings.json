@@ -42,16 +42,32 @@
           "stale_after": "Collar report age limit (seconds)",
           "enable_fence_controls": "Enable fail-safe fence controls",
           "enable_find_collar": "Enable Find collar sound and light",
-          "allow_fence_disable": "Allow fences to be disabled (requires fence controls)"
+          "allow_fence_disable": "Allow fences to be disabled (requires fence controls)",
+          "enable_recall_whistle": "Enable Recall whistle (beta)"
         },
         "data_description": {
           "scan_interval": "How often to poll the Halo cloud for new telemetry. Between 60 and 3600 seconds; the collar itself typically reports every few minutes.",
           "stale_after": "Report age after which Connectivity turns off. This reflects the last collar report, not a live connection check. Polling the cloud does not force a collar report. Between 120 and 86400 seconds. Controls always require reports no older than 900 seconds, or this limit if shorter.",
           "enable_fence_controls": "Adds an idempotent Enable fences button. Controls remain unavailable when collar telemetry is stale.",
           "enable_find_collar": "Adds a manual sound and light button. It may confuse a pet wearing the collar. The command is blocked on stale/ambiguous state, active or unknown walks, missing subscription entitlement, and a post-dispatch cooldown; ambiguous outcomes are never retried.",
-          "allow_fence_disable": "Also adds a Fence mode switch that can disable containment. This remains off unless fail-safe fence controls are enabled, requires a separate high-risk opt-in, and is blocked during an active walk."
+          "allow_fence_disable": "Also adds a Fence mode switch that can disable containment. This remains off unless fail-safe fence controls are enabled, requires a separate high-risk opt-in, and is blocked during an active walk.",
+          "enable_recall_whistle": "Beta. Adds a Recall whistle button and status sensor for each dog. The button plays the dog's trained Recall whistle and nothing else; this integration cannot send corrections. Turning it on first asks you to register Home Assistant with Halo, a permanent change to your Halo account. Each press rereads Halo and is blocked on stale or ambiguous state, active or unknown walks, collars without numbered commands, and a 60-second cooldown. Commands expire within 30 seconds and are never retried. Success means Halo accepted the command, not that the collar played it."
+        }
+      },
+      "recall_registration": {
+        "title": "Register Home Assistant with Halo",
+        "description": "Halo plays the Recall whistle only for a registered mobile device. Confirming sends one request through Halo's unofficial private API that adds Home Assistant to your Halo account as a device. Halo offers no way to remove it, and removing this integration does not remove it. If Halo's answer is lost, the integration never sends another registration; follow the Recall whistle recovery steps in the README.",
+        "data": {
+          "confirm_recall_registration": "Register Home Assistant as a device on my Halo account"
         }
       }
+    },
+    "error": {
+      "registration_not_confirmed": "Check the box to register Home Assistant, or go back and leave the Recall whistle off.",
+      "integration_not_loaded": "Halo Collar must be loaded to register. Fix setup, then try again.",
+      "registration_failed": "No registration request reached Halo, so nothing changed on your account. Try again later.",
+      "registration_uncertain": "Halo's answer to the registration was lost, so the Recall whistle stays off and no other registration will be sent. See the Recall whistle recovery steps in the README.",
+      "recall_storage_unavailable": "Saved Recall whistle state could not be read, so no registration was sent. Restart Home Assistant and try again."
     }
   },
   "entity": {
@@ -90,6 +106,26 @@
           "walk_active": "Blocked during a walk",
           "entitlement_unconfirmed": "Find collar entitlement not confirmed",
           "cooldown": "Find collar cooldown"
+        }
+      },
+      "recall_whistle_status": {
+        "name": "Recall whistle status",
+        "state": {
+          "ready": "Ready to try",
+          "disabled": "Disabled in integration options",
+          "storage_unavailable": "Saved Recall state unreadable",
+          "registration_required": "Registration required",
+          "registration_uncertain": "Registration needs recovery",
+          "cloud_unavailable": "Cloud refresh failed",
+          "mapping_unavailable": "Pet and collar mapping unavailable",
+          "report_unknown": "Collar report time unknown",
+          "report_stale": "Waiting for a usable collar report",
+          "walk_unknown": "Walk state unknown",
+          "walk_active": "Blocked during a walk",
+          "firmware_unknown": "Collar firmware features unknown",
+          "firmware_unsupported": "Collar firmware not supported",
+          "counter_exhausted": "Command numbers used up",
+          "cooldown": "Recall whistle cooldown"
         }
       },
       "find_collar_status": {
@@ -171,7 +207,8 @@
     },
     "button": {
       "enable_fences": {"name": "Enable fences"},
-      "find_collar": {"name": "Find collar (sound and light)"}
+      "find_collar": {"name": "Find collar (sound and light)"},
+      "recall_whistle": {"name": "Recall whistle"}
     },
     "switch": {
       "fence_mode": {"name": "Fence mode"}
