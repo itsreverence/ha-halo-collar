@@ -3,7 +3,7 @@ from __future__ import annotations
 import ssl
 from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, Literal
 
 import aiohttp
 
@@ -20,13 +20,13 @@ class _SingleLeaseConnector(aiohttp.TCPConnector):
     async def connect(self, *args: Any, **kwargs: Any):
         if self._leased:
             raise _ReplayBlocked("Write connection lease already used")
-        # aiohttp's disconnected-PUT retry acquires another connection here.
+        # aiohttp's disconnected-request retry acquires another connection here.
         self._leased = True
         return await super().connect(*args, **kwargs)
 
 
 class HaloWriteTransport:
-    """Own a fresh session and one connection lease for each approved PUT."""
+    """Own a fresh session and one connection lease for each approved write."""
 
     def __init__(
         self,
@@ -40,8 +40,9 @@ class HaloWriteTransport:
         self._trust_env = trust_env
 
     @asynccontextmanager
-    async def put(
+    async def request(
         self,
+        method: Literal["PUT", "POST"],
         url: str,
         *,
         headers: Mapping[str, str],
@@ -67,7 +68,7 @@ class HaloWriteTransport:
                     }
                     if pre_dispatch is not None:
                         pre_dispatch()
-                    async with session.put(url, **request_options) as response:
+                    async with session.request(method, url, **request_options) as response:
                         yield response
         finally:
             # Explicitly supplied resolvers belong to us, not the connector.

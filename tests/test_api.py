@@ -529,7 +529,8 @@ class FakeWriteTransport:
         self.session = session
 
     @asynccontextmanager
-    async def put(self, url, *, headers, payload=None, pre_dispatch=None):
+    async def request(self, method, url, *, headers, payload=None, pre_dispatch=None):
+        assert method == "PUT"
         if pre_dispatch is not None:
             pre_dispatch()
         response = await self.session.put(url, headers=headers, json=payload, allow_redirects=False)

@@ -6,6 +6,7 @@ import socket
 import ssl
 import struct
 import time
+import uuid
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -19,6 +20,8 @@ from custom_components.halo_collar import transport as halo_transport
 from custom_components.halo_collar.api import (
     HaloApiClient,
     HaloApiError,
+    HaloRecallAccepted,
+    HaloRecallCommand,
     HaloWriteOutcomeUnknown,
 )
 from custom_components.halo_collar.const import CONF_ENABLE_FIND_COLLAR
@@ -56,12 +59,21 @@ def _allow_local_sockets(request):
         request.getfixturevalue("socket_enabled")
 
 
+WRITE_OPERATIONS = ["find", "fence", "recall", "register"]
+_SUCCESS_BODIES = {"fence": b"{}", "recall": b'{"result":"Success"}', "register": b'{"mobileId":7}'}
+_RECALL_COMMAND = HaloRecallCommand(
+    mobile_id=7, command_number=3, expires_at=datetime(2026, 11, 17, 12, 0, 30, tzinfo=UTC)
+)
+
+
 def _success_response(operation):
     if operation == "find":
         return b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+    body = _SUCCESS_BODIES[operation]
     return (
         b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
-        b"Content-Length: 2\r\nConnection: close\r\n\r\n{}"
+        + f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n".encode()
+        + body
     )
 
 
@@ -110,17 +122,50 @@ async def _write_server(operation, *, first_response, after_request=None):
 async def _dispatch(client, operation):
     if operation == "find":
         return await client.async_find_collar("synthetic-collar")
+    if operation == "recall":
+        return await client.async_send_recall_whistle(
+            "synthetic-pet", _RECALL_COMMAND, pre_dispatch=lambda: None
+        )
+    if operation == "register":
+        return await client.async_register_recall_device(
+            uuid.UUID(int=1), version_string="synthetic", pre_dispatch=lambda: None
+        )
     return await client.async_set_fences_enabled("synthetic-pet", enabled=True)
 
 
 def _expected_request(operation):
     if operation == "find":
         return ("PUT /collar/synthetic-collar/find HTTP/1.1", None)
+    if operation == "recall":
+        return (
+            "POST /pet/synthetic-pet/run-instant-correction HTTP/1.1",
+            {
+                "mobileId": 7,
+                "commandNumber": 3,
+                "expirationDate": "2026-11-17T12:00:30Z",
+                "correctionType": "returnwhistle",
+            },
+        )
+    if operation == "register":
+        return (
+            "POST /account/mobile-data HTTP/1.1",
+            {
+                "internalMobileId": str(uuid.UUID(int=1)),
+                "versionString": "synthetic",
+                "model": "Home Assistant",
+                "manufacturer": "Home Assistant",
+                "platform": "unknown",
+                "idiom": "unknown",
+            },
+        )
     return ("PUT /pet/synthetic-pet/instant-mode HTTP/1.1", {"modePatch": {"fencesOn": True}})
 
 
+_EXPECTED_RESULTS = {"find": None, "fence": {}, "recall": HaloRecallAccepted(), "register": 7}
+
+
 @pytest.mark.asyncio
-@pytest.mark.parametrize("operation", ["find", "fence"])
+@pytest.mark.parametrize("operation", WRITE_OPERATIONS)
 async def test_complete_write_disconnect_is_unknown_without_transport_replay(operation):
     async with (
         _write_server(operation, first_response=None) as (base_url, received),
@@ -137,7 +182,7 @@ async def test_complete_write_disconnect_is_unknown_without_transport_replay(ope
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("operation", ["find", "fence"])
+@pytest.mark.parametrize("operation", WRITE_OPERATIONS)
 async def test_write_success_over_real_transport(operation):
     async with (
         _write_server(operation, first_response=_success_response(operation)) as (
@@ -149,11 +194,11 @@ async def test_write_success_over_real_transport(operation):
         result = await _dispatch(_new_client(session, base_url), operation)
 
     assert received == [_expected_request(operation)]
-    assert result == (None if operation == "find" else {})
+    assert result == _EXPECTED_RESULTS[operation]
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("operation", ["find", "fence"])
+@pytest.mark.parametrize("operation", WRITE_OPERATIONS)
 async def test_write_redirect_is_unknown_without_following_over_real_transport(operation):
     redirect = (
         b"HTTP/1.1 307 Temporary Redirect\r\nLocation: /redirected\r\n"
@@ -170,7 +215,7 @@ async def test_write_redirect_is_unknown_without_following_over_real_transport(o
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("operation", ["find", "fence"])
+@pytest.mark.parametrize("operation", WRITE_OPERATIONS)
 async def test_complete_write_reset_is_unknown_without_transport_replay(operation):
     async def reset(reader, writer, headers):
         writer.get_extra_info("socket").setsockopt(
@@ -197,7 +242,7 @@ def write_resources(monkeypatch):
 
     def session(**kwargs):
         result = session_type(**kwargs)
-        result.put = Mock(wraps=result.put)
+        result.request = Mock(wraps=result.request)
         resources.sessions.append(result)
         return result
 
@@ -248,7 +293,9 @@ async def test_preparation_failure_or_veto_closes_resources_without_dispatch(
 
     async with _write_server("fence", first_response=None) as (base, received):
         with pytest.raises((ValueError, TypeError, RuntimeError)):
-            async with writer.put(base, headers={}, payload=payload, pre_dispatch=committed):
+            async with writer.request(
+                "PUT", base, headers={}, payload=payload, pre_dispatch=committed
+            ):
                 pytest.fail("preparation failure reached the response")
 
     assert received == []
@@ -358,8 +405,9 @@ async def test_write_preserves_headers_and_shared_session_for_subsequent_read(
     assert write_resources.connectors[0]._ssl is _TLS_CONTEXT
     assert write_resources.connectors[0]._resolver is write_resources.resolvers[0]
     assert write_resources.sessions[0].trust_env is trust_env
-    write_resources.sessions[0].put.assert_called_once()
-    assert write_resources.sessions[0].put.call_args.kwargs["allow_redirects"] is False
+    write_resources.sessions[0].request.assert_called_once()
+    assert write_resources.sessions[0].request.call_args.args[0] == "PUT"
+    assert write_resources.sessions[0].request.call_args.kwargs["allow_redirects"] is False
     assert observed_headers[0]["user-agent"].strip() == "synthetic-ha-agent"
     assert observed_headers[0]["authorization"].strip() == "Bearer synthetic-access"
     assert "Halo-Client".lower() in observed_headers[0]

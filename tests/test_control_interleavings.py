@@ -159,13 +159,13 @@ class FakeResponse:
 
 
 class FakeWriteTransport:
-    """Mirrors HaloWriteTransport.put: pre_dispatch runs with no await before the PUT."""
+    """Mirrors HaloWriteTransport.request: pre_dispatch runs with no await before the send."""
 
     def __init__(self, harness: Harness) -> None:
         self._h = harness
 
     @asynccontextmanager
-    async def put(self, url, *, headers, payload=None, pre_dispatch=None):
+    async def request(self, method, url, *, headers, payload=None, pre_dispatch=None):
         if pre_dispatch is not None:
             pre_dispatch()
         dispatch = self._h.on_dispatch(url, payload)
