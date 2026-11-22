@@ -128,12 +128,12 @@ CI enforces both commands. The `tests` job runs the explorer, and the `control-m
 
 CI cannot tell whether the harness still models the code. A fake can drift from the real transport, or an oracle from the documented rule, while every mutant stays `CAUGHT`. The sync commit marks where a person last checked that.
 
-**Sync commit:** `4184ff3eb7ad00446b44e1161536529c2622e105`. The harness and this record were last confirmed to describe the covered files at this commit.
+**Sync commit:** `b61031b65bf053404bf1cafd9824ecad7e603e46`. The harness and this record were last confirmed to describe the covered files at this commit.
 
 To see whether model fidelity needs another review:
 
 ```bash
-git diff --stat 4184ff3eb7ad00446b44e1161536529c2622e105 -- custom_components/halo_collar/controls.py custom_components/halo_collar/recall.py custom_components/halo_collar/api.py custom_components/halo_collar/transport.py custom_components/halo_collar/helpers.py custom_components/halo_collar/entity.py custom_components/halo_collar/switch.py custom_components/halo_collar/button.py custom_components/halo_collar/const.py
+git diff --stat b61031b65bf053404bf1cafd9824ecad7e603e46 -- custom_components/halo_collar/controls.py custom_components/halo_collar/recall.py custom_components/halo_collar/api.py custom_components/halo_collar/transport.py custom_components/halo_collar/helpers.py custom_components/halo_collar/entity.py custom_components/halo_collar/switch.py custom_components/halo_collar/button.py custom_components/halo_collar/const.py
 ```
 
 If that diff is not empty, read it and confirm (or update) that the fakes, gates, oracles, and this coverage table still describe the code. Then move the sync commit forward.
