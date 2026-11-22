@@ -8,7 +8,7 @@ from homeassistant.components.device_tracker.const import SourceType
 
 from .const import DOMAIN
 from .entity import HaloEntity
-from .helpers import indoors_on_wifi
+from .helpers import indoors_on_wifi, tracker_coordinates
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
@@ -57,15 +57,13 @@ class HaloPetTracker(_IndoorHomeTrackerMixin, HaloEntity, TrackerEntity):
 
     @property
     def latitude(self) -> float | None:
-        pet_info = (self.collar or {}).get("petInfo", {})
-        location = pet_info.get("location") or pet_info.get("lastLocation") or {}
-        return location.get("latitude")
+        coordinates = tracker_coordinates(self.collar or {}, self.pet)
+        return None if coordinates is None else coordinates[0]
 
     @property
     def longitude(self) -> float | None:
-        pet_info = (self.collar or {}).get("petInfo", {})
-        location = pet_info.get("location") or pet_info.get("lastLocation") or {}
-        return location.get("longitude")
+        coordinates = tracker_coordinates(self.collar or {}, self.pet)
+        return None if coordinates is None else coordinates[1]
 
     @property
     def location_accuracy(self) -> float | None:

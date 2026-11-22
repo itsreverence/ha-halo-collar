@@ -478,6 +478,33 @@ def finite_number(value: Any) -> float | None:
     return number if math.isfinite(number) else None
 
 
+def tracker_coordinates(
+    collar: dict[str, Any], pet: dict[str, Any] | None
+) -> tuple[float, float] | None:
+    """Return one valid latitude/longitude pair, never mixing two provider sources.
+
+    Older payloads report the fix under the collar's ``petInfo``; Halo Collar 5 reports
+    it only in the pet's ``telemetry``.
+    """
+    for source in (
+        nested(collar, "petInfo", "location"),
+        nested(collar, "petInfo", "lastLocation"),
+        nested(pet or {}, "telemetry"),
+    ):
+        if not isinstance(source, dict):
+            continue
+        latitude = finite_number(source.get("latitude"))
+        longitude = finite_number(source.get("longitude"))
+        if (
+            latitude is not None
+            and longitude is not None
+            and -90 <= latitude <= 90
+            and -180 <= longitude <= 180
+        ):
+            return latitude, longitude
+    return None
+
+
 def non_negative_number(value: Any) -> float | None:
     """Return a finite non-negative numeric value."""
     number = finite_number(value)

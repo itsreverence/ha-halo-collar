@@ -1370,33 +1370,67 @@ async def test_fence_breach_event_fires_once_per_new_breach(hass, freezer, breac
 
 
 @pytest.mark.parametrize(
-    ("pet_info", "expected_state", "expected"),
+    ("pet_info", "pet_telemetry", "expected_state", "expected"),
     [
         pytest.param(
             {
                 "location": {"latitude": 12.5, "longitude": -45.25},
                 "lastLocation": {"latitude": -7.75, "longitude": 101.5},
             },
+            {},
             "not_home",
             {"latitude": 12.5, "longitude": -45.25, "gps_accuracy": 5.0},
             id="location",
         ),
         pytest.param(
             {"location": None, "lastLocation": {"latitude": -7.75, "longitude": 101.5}},
+            {},
             "not_home",
             {"latitude": -7.75, "longitude": 101.5, "gps_accuracy": 5.0},
             id="last-location",
         ),
-        pytest.param({}, STATE_UNKNOWN, {}, id="none"),
+        pytest.param({}, {}, STATE_UNKNOWN, {}, id="none"),
+        pytest.param(
+            {},
+            {"latitude": 33.5, "longitude": -96.25},
+            "not_home",
+            {"latitude": 33.5, "longitude": -96.25, "gps_accuracy": 5.0},
+            id="pet-telemetry",
+        ),
+        pytest.param(
+            {"location": {"latitude": 12.5}},
+            {"latitude": 33.5, "longitude": -96.25},
+            "not_home",
+            {"latitude": 33.5, "longitude": -96.25, "gps_accuracy": 5.0},
+            id="incomplete-location-uses-one-complete-source",
+        ),
+        pytest.param(
+            {"location": {"latitude": 12.5, "longitude": -45.25}},
+            {"latitude": 33.5, "longitude": -96.25},
+            "not_home",
+            {"latitude": 12.5, "longitude": -45.25, "gps_accuracy": 5.0},
+            id="collar-location-preferred",
+        ),
+        *(
+            pytest.param({}, pet_telemetry, STATE_UNKNOWN, {}, id=case)
+            for case, pet_telemetry in (
+                ("boolean", {"latitude": True, "longitude": False}),
+                ("not-finite", {"latitude": float("nan"), "longitude": float("inf")}),
+                ("latitude-out-of-range", {"latitude": 90.5, "longitude": 10.0}),
+                ("longitude-out-of-range", {"latitude": 10.0, "longitude": -180.5}),
+                ("not-numeric", {"latitude": "north", "longitude": None}),
+            )
+        ),
     ],
 )
 async def test_runtime_tracker_reports_current_or_last_known_coordinates(
-    hass, pet_info, expected_state, expected
+    hass, pet_info, pet_telemetry, expected_state, expected
 ):
     state = _state()
     collar_pet_info = state.collars[0]["petInfo"]
     collar_pet_info.pop("location")
     collar_pet_info.update(pet_info)
+    state.pets[0]["telemetry"].update(pet_telemetry)
     client = FakeHaloClient(state)
     entry = _entry({})
     entry.add_to_hass(hass)
