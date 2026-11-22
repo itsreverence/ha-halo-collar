@@ -43,7 +43,7 @@
           "enable_fence_controls": "Enable fail-safe fence controls",
           "enable_find_collar": "Enable Find collar sound and light",
           "allow_fence_disable": "Allow fences to be disabled (requires fence controls)",
-          "enable_recall_whistle": "Enable Recall whistle (beta)"
+          "enable_recall_whistle": "Enable Recall whistle"
         },
         "data_description": {
           "scan_interval": "How often to poll the Halo cloud for new telemetry. Between 60 and 3600 seconds; the collar itself typically reports every few minutes.",
@@ -51,7 +51,7 @@
           "enable_fence_controls": "Adds an idempotent Enable fences button. Controls remain unavailable when collar telemetry is stale.",
           "enable_find_collar": "Adds a manual sound and light button. It may confuse a pet wearing the collar. The command is blocked on stale/ambiguous state, active or unknown walks, missing subscription entitlement, and a post-dispatch cooldown; ambiguous outcomes are never retried.",
           "allow_fence_disable": "Also adds a Fence mode switch that can disable containment. This remains off unless fail-safe fence controls are enabled, requires a separate high-risk opt-in, and is blocked during an active walk.",
-          "enable_recall_whistle": "Beta. Adds a Recall whistle button and status sensor for each dog. The button plays the dog's trained Recall whistle and nothing else; this integration cannot send corrections. Turning it on first asks you to register Home Assistant with Halo, a permanent change to your Halo account. Each press rereads Halo and is blocked on stale or ambiguous state, active or unknown walks, collars without numbered commands, and a 60-second cooldown. Commands expire within 30 seconds and are never retried. Success means Halo accepted the command, not that the collar played it."
+          "enable_recall_whistle": "Adds a Recall whistle button and status sensor for each dog. The button plays the dog's trained Recall whistle and nothing else; this integration cannot send corrections. Turning it on first asks you to register Home Assistant with Halo, a permanent change to your Halo account. Each press rereads Halo and is blocked on stale or ambiguous state, active or unknown walks, collars without numbered commands, and a 60-second cooldown. Commands expire within 30 seconds and are never retried. Success means Halo accepted the command, not that the collar played it."
         }
       },
       "recall_registration": {

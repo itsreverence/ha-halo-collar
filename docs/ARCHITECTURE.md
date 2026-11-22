@@ -20,7 +20,7 @@ Home Assistant config entry (email, tokens, expiry, OAuth client settings; no pa
   -> platforms expose telemetry entities plus disabled-by-default controls
      -> fence mode: one PUT /pet/{id}/instant-mode with {modePatch: {fencesOn: bool}}
      -> Find collar: one bodyless PUT /collar/{id}/find; requests sound and light
-     -> Recall whistle (beta): one GET /configuration, then one POST /pet/{id}/run-instant-correction
+     -> Recall whistle: one GET /configuration, then one POST /pet/{id}/run-instant-correction
         whose correctionType is always "returnwhistle"
      -> Recall registration: one POST /account/mobile-data, only from the confirmed options flow
      -> all physical commands serialized per config entry across option-triggered reloads
@@ -35,7 +35,7 @@ Home Assistant config entry (email, tokens, expiry, OAuth client settings; no pa
 - `binary_sensor`: connectivity (staleness threshold configurable via options), fence breach, fence mode, fence synchronization, GPS calibration required, compass calibration required, active walk/paused state, diagnostic-reporting reliability, a fail-closed hardware issue summary with bounded allowlisted labels, and firmware update availability.
 - `device_tracker`: provider GPS coordinates with an indoor Home state override. When `gpsAccuracyStatus` is `indoors` and `currentAdapter` is `wifi`, the tracker forces Home zone membership through `in_zones`, or `location_name` on older Home Assistant versions. These indicators do not verify the SSID or physical home location. Latitude and longitude remain the provider coordinates.
 - `event`: fence breach event entity for automation triggers.
-- `button`: fail-safe idempotent fence enable after the fence-control opt-in; separately opted-in Find collar physical sound-and-light command after fresh identity/telemetry/entitlement checks and subject to a post-dispatch cooldown; separately opted-in Recall whistle per dog (beta), placed on the dog's collar device.
+- `button`: fail-safe idempotent fence enable after the fence-control opt-in; separately opted-in Find collar physical sound-and-light command after fresh identity/telemetry/entitlement checks and subject to a post-dispatch cooldown; separately opted-in Recall whistle per dog, placed on the dog's collar device.
 - `switch`: full fence mode including disable, available only after the separate high-risk opt-in.
 - `diagnostics`: redacted config-entry diagnostics (tokens, serials, coordinates, names removed).
 
@@ -115,7 +115,7 @@ Find collar requests the physical find sound and light command. It is not the tr
 
 Each write (PUT or POST) owns a fresh session and connector that refuses a second connection lease. This blocks aiohttp's disconnected-request replay path on the dependency versions covered by the socket tests. Write sessions preserve Home Assistant's verified TLS context, default headers, and `trust_env` policy, but use the system threaded resolver instead of Home Assistant's shared DNS cache and connection pool. Resource preparation precedes the dispatch callback; all write resources close with the request. The shared telemetry session is unchanged.
 
-### Recall whistle (beta)
+### Recall whistle
 
 The Recall whistle plays a dog's trained Recall sound through Halo's instant-correction endpoint. That endpoint also delivers warnings and static, so the type is fixed in structure. `api.py` holds `"returnwhistle"` as one private constant, `HaloRecallCommand` has no type field, and no option, argument, or service field can choose another type. Tests pin the exact four-key body, and a control mutant proves the explorer catches any other value.
 

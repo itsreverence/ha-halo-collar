@@ -101,7 +101,7 @@ Open **Configure** on the integration under **Settings > Devices & services**.
 | **Enable fail-safe fence controls** | Off. Adds **Enable fences**, which can restore fence enforcement but cannot disable it. |
 | **Allow fences to be disabled (requires fence controls)** | Off. Also requires **Enable fail-safe fence controls**. Adds **Fence mode**, which can disable containment, including through automations. Active or unknown walks block fence-off. |
 | **Enable Find collar sound and light** | Off. Adds **Find collar (sound and light)** to request a sound and light command. It may confuse a pet wearing the collar. It requires fresh exact mapping, subscription entitlement, and no active or unknown walk. Every attempted dispatch starts a 60-second cooldown, including failed or ambiguous outcomes. Provider acceptance does not verify physical execution. |
-| **Enable Recall whistle (beta)** | Off. Adds a **Recall whistle** button for each dog that wears a Halo collar. Turning it on first asks you to register Home Assistant with Halo, a permanent account change. See [Recall whistle (beta)](#recall-whistle-beta). |
+| **Enable Recall whistle** | Off. Adds a **Recall whistle** button for each dog that wears a Halo collar. Turning it on first asks you to register Home Assistant with Halo, a permanent account change. See [Recall whistle](#recall-whistle). |
 
 Controls require telemetry no older than the shorter of **Collar report age limit** and 900 seconds. Fence changes require synchronized reported-state confirmation. Commands are sent at most once and are never replayed after an ambiguous result.
 
@@ -109,11 +109,11 @@ Each opted-in action adds a status sensor under **Diagnostic** on the collar's d
 
 Changing a control option reloads the integration. Revoked controls and their matching status sensors may remain in the entity registry as unavailable. Revoked controls cannot dispatch commands. See [control troubleshooting](SUPPORT.md#control-missing-unavailable-or-rejected) and the [control transaction design](docs/ARCHITECTURE.md#control-transactions).
 
-### Recall whistle (beta)
+### Recall whistle
 
 The Recall whistle button plays the Recall whistle you trained your dog to come to, so an automation can call your dogs in when the dog door opens, a storm is coming, or a camera hears coyotes. The Halo app cannot automate this. **Find collar** plays a different sound.
 
-This is a beta, and it uses Halo's unofficial private API. Halo may change or block it at any time.
+It uses Halo's unofficial private API. Halo may change or block it at any time.
 
 - **Whistle only.** The integration sends only Halo's `returnwhistle` command. It cannot send warnings, static, or any other correction.
 - **Permanent registration.** Halo accepts this command only from a registered mobile device. Turning the option on shows a confirmation step. Confirming sends one request that adds Home Assistant to your Halo account as a device. Halo offers no way to remove it, and removing this integration does not remove it. Turning the option off and on again reuses the same registration.
